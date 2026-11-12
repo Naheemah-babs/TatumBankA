@@ -5,6 +5,15 @@ using TatumWelcome2.DTOs;
 
 namespace TatumWelcome2.Repositories;
 
+public sealed class IncomingTransferOutcome
+{
+    public string Reference { get; set; } = "";
+    public string SenderAccountNumber { get; set; } = "";
+    public string RecipientAccountNumber { get; set; } = "";
+    public decimal Amount { get; set; }
+    public string Status { get; set; } = "";
+}
+
 public class IncomingInterbankTransferRepository
 {
     private readonly DbConnectionFactory _factory;
@@ -39,17 +48,15 @@ public class IncomingInterbankTransferRepository
 
         try
         {
-            // Lock this reference using its unique database key.
-            // If another request is inserting the same reference,
-            // MySQL waits until that transaction finishes.
+            // Reserve the reference using the database's unique key.
             int inserted = connection.Execute(
                 """
                 INSERT IGNORE INTO IncomingInterbankTransfers
                     (Reference, SenderAccountNumber,
-                     RecipientAccountNumber, Amount)
+                     RecipientAccountNumber, Amount, Status)
                 VALUES
                     (@Reference, @SenderAccountNumber,
-                     @RecipientAccountNumber, @Amount);
+                     @RecipientAccountNumber, @Amount, 'Processing');
                 """,
                 request,
                 transaction);
@@ -57,11 +64,10 @@ public class IncomingInterbankTransferRepository
             if (inserted == 0)
             {
                 var previous =
-                    connection.QuerySingleOrDefault
-                        <InterbankTransferRequestDto>(
+                    connection.QuerySingleOrDefault<IncomingTransferOutcome>(
                         """
                         SELECT Reference, SenderAccountNumber,
-                               RecipientAccountNumber, Amount
+                               RecipientAccountNumber, Amount, Status
                         FROM IncomingInterbankTransfers
                         WHERE Reference = @Reference;
                         """,
@@ -80,38 +86,47 @@ public class IncomingInterbankTransferRepository
                         request.RecipientAccountNumber &&
                     previous.Amount == request.Amount;
 
-                return sameRequest
-                    ? "AlreadyProcessed"
-                    : "ReferenceConflict";
+                if (!sameRequest)
+                    return "ReferenceConflict";
+
+                return previous.Status switch
+                {
+                    "Successful" => "AlreadyProcessed",
+                    "Rejected" => "Rejected",
+                    _ => "Pending"
+                };
             }
 
-            // Lock recipient's account balance.
-            var recipient = connection.QuerySingleOrDefault
-                <RecipientRow>(
-                """
-                SELECT Balance
-                FROM Accounts
-                WHERE AccountNumber = @RecipientAccountNumber
-                FOR UPDATE;
-                """,
-                new { request.RecipientAccountNumber },
-                transaction);
-
-            if (recipient == null)
-            {
-                transaction.Rollback();
-                return "AccountNotFound";
-            }
+            var recipient =
+                connection.QuerySingleOrDefault<RecipientRow>(
+                    """
+                    SELECT Balance
+                    FROM Accounts
+                    WHERE AccountNumber = @RecipientAccountNumber
+                    FOR UPDATE;
+                    """,
+                    new { request.RecipientAccountNumber },
+                    transaction);
 
             const decimal maxBalance = 9999999999999999.99m;
 
-            if (recipient.Balance > maxBalance - request.Amount)
+            if (recipient == null ||
+                recipient.Balance > maxBalance - request.Amount)
             {
-                transaction.Rollback();
-                return "InvalidRequest";
+                connection.Execute(
+                    """
+                    UPDATE IncomingInterbankTransfers
+                    SET Status = 'Rejected'
+                    WHERE Reference = @Reference;
+                    """,
+                    new { request.Reference },
+                    transaction);
+
+                transaction.Commit();
+
+                return "Rejected";
             }
 
-            // Credit recipient's MySQL account.
             connection.Execute(
                 """
                 UPDATE Accounts
@@ -121,7 +136,6 @@ public class IncomingInterbankTransferRepository
                 request,
                 transaction);
 
-            // Save transaction history.
             connection.Execute(
                 """
                 INSERT INTO Transactions
@@ -142,7 +156,17 @@ public class IncomingInterbankTransferRepository
                 },
                 transaction);
 
+            connection.Execute(
+                """
+                UPDATE IncomingInterbankTransfers
+                SET Status = 'Successful'
+                WHERE Reference = @Reference;
+                """,
+                new { request.Reference },
+                transaction);
+
             transaction.Commit();
+
             return "Success";
         }
         catch
@@ -152,23 +176,38 @@ public class IncomingInterbankTransferRepository
         }
     }
 
-    public InterbankTransferRequestDto? FindProcessedTransfer(
-        string reference)
+    public IncomingTransferOutcome? GetOutcome(string reference)
     {
         if (string.IsNullOrWhiteSpace(reference))
             return null;
 
         using var connection = _factory.CreateConnection();
 
-        return connection.QuerySingleOrDefault
-            <InterbankTransferRequestDto>(
+        return connection.QuerySingleOrDefault<IncomingTransferOutcome>(
             """
             SELECT Reference, SenderAccountNumber,
-                   RecipientAccountNumber, Amount
+                   RecipientAccountNumber, Amount, Status
             FROM IncomingInterbankTransfers
             WHERE Reference = @Reference;
             """,
             new { Reference = reference });
+    }
+
+    public InterbankTransferRequestDto? FindProcessedTransfer(
+        string reference)
+    {
+        IncomingTransferOutcome? outcome = GetOutcome(reference);
+
+        if (outcome == null || outcome.Status != "Successful")
+            return null;
+
+        return new InterbankTransferRequestDto
+        {
+            Reference = outcome.Reference,
+            SenderAccountNumber = outcome.SenderAccountNumber,
+            RecipientAccountNumber = outcome.RecipientAccountNumber,
+            Amount = outcome.Amount
+        };
     }
 
     private sealed class RecipientRow

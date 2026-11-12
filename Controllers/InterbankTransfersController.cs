@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using TatumWelcome2.BLL;
 using TatumWelcome2.DTOs;
+using TatumWelcome2.Repositories;
 using TatumWelcome2.Security;
 
 namespace TatumWelcome2.Controllers;
@@ -24,15 +25,18 @@ public class InterbankTransfersController : ControllerBase
 {
     private readonly InterbankTransferService _incoming;
     private readonly InterbankOutgoingTransferService _outgoing;
+    private readonly IncomingInterbankTransferRepository _repository;
     private readonly IConfiguration _configuration;
 
     public InterbankTransfersController(
         InterbankTransferService incoming,
         InterbankOutgoingTransferService outgoing,
+        IncomingInterbankTransferRepository repository,
         IConfiguration configuration)
     {
         _incoming = incoming;
         _outgoing = outgoing;
+        _repository = repository;
         _configuration = configuration;
     }
 
@@ -49,46 +53,29 @@ public class InterbankTransfersController : ControllerBase
         if (string.IsNullOrWhiteSpace(senderNumber))
             return Unauthorized();
 
-        if (string.IsNullOrWhiteSpace(request.Reference))
+        if (string.IsNullOrWhiteSpace(request.Reference) ||
+            !Guid.TryParseExact(request.Reference, "N", out _))
         {
             return BadRequest(new
             {
-                Message = "Transfer reference is required."
-            });
-        }
-
-        if (!Guid.TryParseExact(request.Reference, "N", out _))
-        {
-            return BadRequest(new
-            {
-                Message = "Transfer reference must be a valid GUID."
+                Message = "A valid transfer reference is required."
             });
         }
 
         if (string.IsNullOrWhiteSpace(request.Pin))
-        {
-            return BadRequest(new
-            {
-                Message = "PIN is required."
-            });
-        }
+            return BadRequest(new { Message = "PIN is required." });
 
-        if (string.IsNullOrWhiteSpace(
-            request.RecipientAccountNumber))
-        {
+        if (string.IsNullOrWhiteSpace(request.RecipientAccountNumber))
             return BadRequest(new
             {
                 Message = "Recipient account number is required."
             });
-        }
 
         if (request.Amount <= 0)
-        {
             return BadRequest(new
             {
                 Message = "Amount must be greater than zero."
             });
-        }
 
         string bankUrl =
             _configuration["Banks:BankB:Url"]
@@ -121,6 +108,12 @@ public class InterbankTransfersController : ControllerBase
             "AlreadyProcessed" =>
                 Ok("Transfer already processed."),
 
+            "Rejected" =>
+                Ok("Transfer permanently rejected."),
+
+            "Pending" =>
+                Ok("Transfer pending confirmation."),
+
             "AccountNotFound" =>
                 NotFound("Recipient account not found."),
 
@@ -136,15 +129,15 @@ public class InterbankTransfersController : ControllerBase
     [HttpGet("status/{reference}")]
     public IActionResult GetStatus(string reference)
     {
-        InterbankTransferRequestDto? transfer =
-            _incoming.FindProcessedTransfer(reference);
+        IncomingTransferOutcome? outcome =
+            _repository.GetOutcome(reference);
 
-        if (transfer == null)
+        if (outcome == null)
         {
             return NotFound(
-                "No processed transfer found for this reference.");
+                "No transfer outcome found for this reference.");
         }
 
-        return Ok(transfer);
+        return Ok(outcome);
     }
 }

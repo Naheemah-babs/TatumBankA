@@ -37,8 +37,12 @@ public sealed class InterbankOutgoingTransferService
             return "Invalid bank or recipient.";
         }
 
-        if (amount <= 0)
+        if (amount <= 0 ||
+            amount > 9999999999999999.99m ||
+            decimal.Round(amount, 2) != amount)
+        {
             return "Transfer failed: InvalidAmount";
+        }
 
         reference ??= Guid.NewGuid().ToString("N");
 
@@ -53,13 +57,19 @@ public sealed class InterbankOutgoingTransferService
                 existing.Amount == amount;
 
             if (!sameDetails)
+            {
                 return "Transfer reference already used for different details.";
+            }
 
             if (existing.Status == "Successful")
+            {
                 return $"Transfer already successful! Reference: {reference}";
+            }
 
             if (existing.Status == "Reversed")
+            {
                 return $"Transfer already reversed. Reference: {reference}";
+            }
 
             return $"Transfer pending confirmation. Reference: {reference}. No additional debit made.";
         }
@@ -91,13 +101,16 @@ public sealed class InterbankOutgoingTransferService
         }
 
         if (debitResult != TransactionResult.Success)
+        {
             return $"Transfer failed: {debitResult}";
+        }
 
         try
         {
             using HttpResponseMessage response =
                 await _bankApiClient.SendTransferAsync(
-                    bankUrl, request);
+                    bankUrl,
+                    request);
 
             if (response.IsSuccessStatusCode)
             {
@@ -115,21 +128,21 @@ public sealed class InterbankOutgoingTransferService
                 if (confirmed)
                 {
                     _repository.MarkSuccessful(reference);
+
                     return $"Transfer successful! Reference: {reference}";
                 }
 
+                // A successful HTTP response does not necessarily
+                // mean the transfer was successful.
                 return $"Transfer pending confirmation. Reference: {reference}.";
             }
 
-            if (response.StatusCode == HttpStatusCode.BadRequest ||
-                response.StatusCode == HttpStatusCode.NotFound)
-            {
-                bool reversed = _repository.Reverse(reference);
-
-                return reversed
-                    ? $"Transfer failed. Amount reversed. Reference: {reference}"
-                    : $"Transfer rejected. Reversal requires attention. Reference: {reference}";
-            }
+            // Do not reverse on HTTP 400 or 404.
+            // Only a confirmed final rejection permits reversal.
+            _logger.LogWarning(
+                "Receiving bank returned HTTP {StatusCode} for transfer {Reference}.",
+                response.StatusCode,
+                reference);
 
             return $"Transfer pending confirmation. Reference: {reference}.";
         }
@@ -170,23 +183,27 @@ public sealed class InterbankOutgoingTransferService
                         pending.Reference);
 
                 if (!response.IsSuccessStatusCode)
+                {
                     continue;
+                }
 
-                var confirmed =
+                var outcome =
                     await response.Content.ReadFromJsonAsync
-                        <InterbankTransferRequestDto>(
+                        <InterbankTransferOutcomeDto>(
                             cancellationToken: cancellationToken);
 
-                if (confirmed == null)
+                if (outcome == null)
+                {
                     continue;
+                }
 
                 bool matches =
-                    confirmed.Reference == pending.Reference &&
-                    confirmed.SenderAccountNumber ==
+                    outcome.Reference == pending.Reference &&
+                    outcome.SenderAccountNumber ==
                         pending.SenderAccountNumber &&
-                    confirmed.RecipientAccountNumber ==
+                    outcome.RecipientAccountNumber ==
                         pending.RecipientAccountNumber &&
-                    confirmed.Amount == pending.Amount;
+                    outcome.Amount == pending.Amount;
 
                 if (!matches)
                 {
@@ -197,11 +214,38 @@ public sealed class InterbankOutgoingTransferService
                     continue;
                 }
 
-                _repository.MarkSuccessful(pending.Reference);
+                if (outcome.Status == "Successful")
+                {
+                    _repository.MarkSuccessful(pending.Reference);
 
-                _logger.LogInformation(
-                    "Interbank transfer confirmed: {Reference}",
-                    pending.Reference);
+                    _logger.LogInformation(
+                        "Interbank transfer confirmed: {Reference}",
+                        pending.Reference);
+                }
+                else if (outcome.Status == "Rejected")
+                {
+                    bool reversed =
+                        _repository.Reverse(pending.Reference);
+
+                    if (reversed)
+                    {
+                        _logger.LogInformation(
+                            "Rejected interbank transfer reversed: {Reference}",
+                            pending.Reference);
+                    }
+                    else
+                    {
+                        _logger.LogWarning(
+                            "Could not reverse rejected transfer: {Reference}",
+                            pending.Reference);
+                    }
+                }
+                else
+                {
+                    _logger.LogInformation(
+                        "Interbank transfer still pending: {Reference}",
+                        pending.Reference);
+                }
             }
             catch (OperationCanceledException)
                 when (cancellationToken.IsCancellationRequested)
