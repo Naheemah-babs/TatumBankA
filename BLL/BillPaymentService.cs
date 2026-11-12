@@ -1,29 +1,20 @@
 ﻿
 using TatumWelcome2.DTOs;
 using TatumWelcome2.Models;
+using TatumWelcome2.Repositories;
 
 namespace TatumWelcome2.BLL;
 
 public class BillPaymentService
 {
-    private string _paymentMode = "Random";
+    private readonly BillPaymentRepository _repository;
 
-    private readonly Dictionary<string, (
-        BillPaymentRequestDto Request,
-        BillPaymentResponseDto Response)> _payments = new();
-
-    private readonly object _paymentLock = new();
-
-    public string PaymentMode
+    public BillPaymentService(BillPaymentRepository repository)
     {
-        get
-        {
-            lock (_paymentLock)
-            {
-                return _paymentMode;
-            }
-        }
+        _repository = repository;
     }
+
+    public string PaymentMode => _repository.GetPaymentMode();
 
     public bool SetPaymentMode(string mode)
     {
@@ -34,113 +25,89 @@ public class BillPaymentService
             return false;
         }
 
-        lock (_paymentLock)
-        {
-            _paymentMode = mode;
-        }
-
+        _repository.SetPaymentMode(mode);
         return true;
     }
 
     public BillPaymentResponseDto ProcessPayment(
         BillPaymentRequestDto request)
     {
-        lock (_paymentLock)
+        if (request == null)
         {
-            if (string.IsNullOrWhiteSpace(request.Reference))
+            return new BillPaymentResponseDto
             {
-                return Failed(
-                    request, "Payment reference is required.");
-            }
-
-            if (string.IsNullOrWhiteSpace(request.BankId))
-            {
-                return Failed(
-                    request, "Bank identifier is required.");
-            }
-
-            if (string.IsNullOrWhiteSpace(request.AccountNumber))
-            {
-                return Failed(
-                    request, "Account number is required.");
-            }
-
-            if (_payments.TryGetValue(request.Reference, out var previous))
-            {
-                bool sameRequest =
-                    previous.Request.BankId == request.BankId &&
-                    previous.Request.AccountNumber == request.AccountNumber &&
-                    previous.Request.PaymentType == request.PaymentType &&
-                    previous.Request.Network == request.Network &&
-                    previous.Request.PhoneNumber == request.PhoneNumber &&
-                    previous.Request.Amount == request.Amount &&
-                    previous.Request.DataPlanName == request.DataPlanName;
-
-                if (sameRequest)
-                    return previous.Response;
-
-                return Failed(
-                    request,
-                    "Payment reference already used for another request.");
-            }
-
-            if (request.PaymentType != "Airtime" &&
-                request.PaymentType != "Data")
-            {
-                return Failed(request, "Invalid payment type.");
-            }
-
-            if (!DataPlans.Networks.Contains(request.Network))
-            {
-                return Failed(request, "Invalid network provider.");
-            }
-
-            if (request.PhoneNumber == null ||
-                request.PhoneNumber.Length != 11 ||
-                !request.PhoneNumber.All(char.IsDigit))
-            {
-                return Failed(request, "Invalid phone number.");
-            }
-
-            if (request.PaymentType == "Airtime" &&
-                request.Amount < 50)
-            {
-                return Failed(
-                    request, "Minimum airtime amount is 50.");
-            }
-
-            if (request.PaymentType == "Data")
-            {
-                bool validPlan = DataPlans.DataPlanItems.Any(
-                    plan => plan.Name == request.DataPlanName &&
-                            plan.Price == request.Amount);
-
-                if (!validPlan)
-                {
-                    return Failed(request, "Invalid data plan.");
-                }
-            }
-
-            bool success = _paymentMode switch
-            {
-                "Success" => true,
-                "Failure" => false,
-                _ => Random.Shared.Next(100) < 80
+                Success = false,
+                Message = "Payment request is required."
             };
-
-            BillPaymentResponseDto response = new()
-            {
-                Success = success,
-                Message = success
-                    ? "Bill payment successful."
-                    : "Bill payment failed. Please try again.",
-                Reference = request.Reference
-            };
-
-            _payments.Add(request.Reference, (request, response));
-
-            return response;
         }
+
+        if (string.IsNullOrWhiteSpace(request.Reference) ||
+            request.Reference.Length > 100)
+        {
+            return Failed(request, "Invalid payment reference.");
+        }
+
+        if (string.IsNullOrWhiteSpace(request.BankId) ||
+            request.BankId.Length > 50)
+        {
+            return Failed(request, "Invalid bank identifier.");
+        }
+
+        if (string.IsNullOrWhiteSpace(request.AccountNumber) ||
+            request.AccountNumber.Length > 10)
+        {
+            return Failed(request, "Invalid account number.");
+        }
+
+        if (request.PaymentType != "Airtime" &&
+            request.PaymentType != "Data")
+        {
+            return Failed(request, "Invalid payment type.");
+        }
+
+        if (!DataPlans.Networks.Contains(request.Network))
+        {
+            return Failed(request, "Invalid network provider.");
+        }
+
+        if (request.PhoneNumber == null ||
+            request.PhoneNumber.Length != 11 ||
+            !request.PhoneNumber.All(char.IsDigit))
+        {
+            return Failed(request, "Invalid phone number.");
+        }
+
+        if (request.Amount <= 0 ||
+            request.Amount > 9999999999999999.99m ||
+            decimal.Round(request.Amount, 2) != request.Amount)
+        {
+            return Failed(request, "Invalid payment amount.");
+        }
+
+        if (request.PaymentType == "Airtime" &&
+            request.Amount < 50)
+        {
+            return Failed(request, "Minimum airtime amount is 50.");
+        }
+
+        if (request.PaymentType == "Data")
+        {
+            bool validPlan = DataPlans.DataPlanItems.Any(
+                plan => plan.Name == request.DataPlanName &&
+                        plan.Price == request.Amount);
+
+            if (!validPlan)
+            {
+                return Failed(request, "Invalid data plan.");
+            }
+        }
+
+        if (request.DataPlanName?.Length > 100)
+        {
+            return Failed(request, "Invalid data plan name.");
+        }
+
+        return _repository.ProcessPayment(request);
     }
 
     private static BillPaymentResponseDto Failed(

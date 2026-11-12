@@ -1,58 +1,30 @@
 ﻿
+using TatumWelcome2.Interfaces;
 using TatumWelcome2.Models;
 
 namespace TatumWelcome2.BLL;
 
 public class AdminService
 {
-    private readonly List<Account> _accounts;
+    private readonly IAccountRepository _repository;
 
-    public AdminService(List<Account> accounts)
+    public AdminService(IAccountRepository repository)
     {
-        _accounts = accounts;
+        _repository = repository;
     }
 
     public bool FreezeAccount(string accountNumber)
     {
-        Account? account = AccountService.FindAccount(
-            _accounts, accountNumber);
-
-        if (account == null)
-        {
-            return false;
-        }
-
-        if (account.IsFrozen)
-        {
-            return false;
-        }
-
-        account.Freeze();
-        return true;
+        return _repository.SetFrozenStatus(accountNumber, true);
     }
 
     public bool UnfreezeAccount(string accountNumber)
     {
-        Account? account = AccountService.FindAccount(
-            _accounts, accountNumber);
-
-        if (account == null)
-        {
-            return false;
-        }
-
-        if (!account.IsFrozen)
-        {
-            return false;
-        }
-
-        account.Unfreeze();
-        return true;
+        return _repository.SetFrozenStatus(accountNumber, false);
     }
 
     public Account? FindAccount(string accountNumber)
     {
-        return AccountService.FindAccount(
-            _accounts, accountNumber);
+        return _repository.FindByAccountNumber(accountNumber);
     }
 }

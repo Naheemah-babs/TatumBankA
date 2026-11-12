@@ -1,200 +1,220 @@
 ﻿
-using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Json;
 using TatumWelcome2.DTOs;
 using TatumWelcome2.Interfaces;
-using TatumWelcome2.Models;
+using TatumWelcome2.Repositories;
 
 namespace TatumWelcome2.BLL;
 
-public class InterbankOutgoingTransferService
+public sealed class InterbankOutgoingTransferService
 {
     private readonly IBankApiClient _bankApiClient;
-    private readonly object _lock = new();
+    private readonly OutgoingInterbankTransferRepository _repository;
+    private readonly ILogger<InterbankOutgoingTransferService> _logger;
 
-    private readonly ConcurrentDictionary<string, PendingInterbankTransfer>
-        _pendingTransfers = new();
-
-    private readonly SemaphoreSlim _reconciliationLock = new(1, 1);
-
-    public InterbankOutgoingTransferService(IBankApiClient bankApiClient)
+    public InterbankOutgoingTransferService(
+        IBankApiClient bankApiClient,
+        OutgoingInterbankTransferRepository repository,
+        ILogger<InterbankOutgoingTransferService> logger)
     {
         _bankApiClient = bankApiClient;
+        _repository = repository;
+        _logger = logger;
     }
 
-    public string SendTransfer(
-        Account sender,
+    public async Task<string> SendTransferAsync(
+        string senderNumber,
         string bankUrl,
         string recipientAccountNumber,
         decimal amount,
-        string pin)
+        string pin,
+        string? reference = null)
     {
-        if (!AccountService.VerifyPin(sender, pin))
-            return "Invalid PIN. Transfer cancelled.";
-
         if (string.IsNullOrWhiteSpace(bankUrl) ||
             string.IsNullOrWhiteSpace(recipientAccountNumber))
-            return "Invalid bank or recipient.";
-
-        lock (_lock)
         {
-            TransactionResult check = sender.CheckWithdraw(amount);
+            return "Invalid bank or recipient.";
+        }
 
-            if (check != TransactionResult.Success)
-                return $"Transfer failed: {check}";
+        if (amount <= 0)
+            return "Transfer failed: InvalidAmount";
 
-            string reference = Guid.NewGuid().ToString("N");
+        reference ??= Guid.NewGuid().ToString("N");
 
-            var request = new InterbankTransferRequestDto
-            {
-                Reference = reference,
-                SenderAccountNumber = sender.AccountNumber,
-                RecipientAccountNumber = recipientAccountNumber,
-                Amount = amount
-            };
+        var existing = _repository.GetByReference(reference);
 
-            TransactionResult debitResult = sender.TransferOut(
+        if (existing != null)
+        {
+            bool sameDetails =
+                existing.SenderAccountNumber == senderNumber &&
+                existing.RecipientAccountNumber == recipientAccountNumber &&
+                existing.BankUrl == bankUrl &&
+                existing.Amount == amount;
+
+            if (!sameDetails)
+                return "Transfer reference already used for different details.";
+
+            if (existing.Status == "Successful")
+                return $"Transfer already successful! Reference: {reference}";
+
+            if (existing.Status == "Reversed")
+                return $"Transfer already reversed. Reference: {reference}";
+
+            return $"Transfer pending confirmation. Reference: {reference}. No additional debit made.";
+        }
+
+        var request = new InterbankTransferRequestDto
+        {
+            Reference = reference,
+            SenderAccountNumber = senderNumber,
+            RecipientAccountNumber = recipientAccountNumber,
+            Amount = amount
+        };
+
+        TransactionResult debitResult;
+
+        try
+        {
+            debitResult = _repository.DebitAndCreate(
+                senderNumber,
+                recipientAccountNumber,
+                bankUrl,
                 amount,
-                $"Interbank transfer to {recipientAccountNumber}",
+                pin,
                 reference);
+        }
+        catch (MySqlConnector.MySqlException ex)
+            when (ex.Number == 1062)
+        {
+            return $"Transfer reference already exists. Reference: {reference}. No additional debit made.";
+        }
 
-            if (debitResult != TransactionResult.Success)
-                return $"Transfer failed: {debitResult}";
+        if (debitResult != TransactionResult.Success)
+            return $"Transfer failed: {debitResult}";
 
-            try
+        try
+        {
+            using HttpResponseMessage response =
+                await _bankApiClient.SendTransferAsync(
+                    bankUrl, request);
+
+            if (response.IsSuccessStatusCode)
             {
-                using HttpResponseMessage response =
-                    _bankApiClient.SendTransferAsync(bankUrl, request)
-                        .GetAwaiter().GetResult();
+                string responseMessage =
+                    await response.Content.ReadAsStringAsync();
 
-                if (response.IsSuccessStatusCode)
-                    return $"Transfer successful! Reference: {reference}";
+                bool confirmed =
+                    responseMessage.Contains(
+                        "Transfer received successfully.",
+                        StringComparison.Ordinal) ||
+                    responseMessage.Contains(
+                        "Transfer already processed.",
+                        StringComparison.Ordinal);
 
-                if (response.StatusCode == HttpStatusCode.BadRequest ||
-                    response.StatusCode == HttpStatusCode.NotFound)
+                if (confirmed)
                 {
-                    bool reversed = sender.TransferIn(
-                        amount,
-                        $"Reversal of rejected interbank transfer {reference}",
-                        reference);
-
-                    return reversed
-                        ? $"Transfer failed. Amount reversed. Reference: {reference}"
-                        : $"Transfer failed, but reversal could not be completed. Reference: {reference}";
+                    _repository.MarkSuccessful(reference);
+                    return $"Transfer successful! Reference: {reference}";
                 }
-
-                SavePending(sender, bankUrl, request);
 
                 return $"Transfer pending confirmation. Reference: {reference}.";
             }
-            catch (HttpRequestException)
-            {
-                SavePending(sender, bankUrl, request);
 
-                return $"Network error. Transfer pending confirmation. Reference: {reference}.";
-            }
-            catch (TaskCanceledException)
+            if (response.StatusCode == HttpStatusCode.BadRequest ||
+                response.StatusCode == HttpStatusCode.NotFound)
             {
-                SavePending(sender, bankUrl, request);
+                bool reversed = _repository.Reverse(reference);
 
-                return $"Transfer timed out. Pending confirmation. Reference: {reference}.";
+                return reversed
+                    ? $"Transfer failed. Amount reversed. Reference: {reference}"
+                    : $"Transfer rejected. Reversal requires attention. Reference: {reference}";
             }
+
+            return $"Transfer pending confirmation. Reference: {reference}.";
         }
-    }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Network error for interbank transfer {Reference}",
+                reference);
 
-    private void SavePending(
-        Account sender,
-        string bankUrl,
-        InterbankTransferRequestDto request)
-    {
-        _pendingTransfers.TryAdd(
-            request.Reference,
-            new PendingInterbankTransfer(sender, bankUrl, request));
+            return $"Network error. Transfer pending confirmation. Reference: {reference}.";
+        }
+        catch (TaskCanceledException ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Timeout for interbank transfer {Reference}",
+                reference);
+
+            return $"Transfer timed out. Pending confirmation. Reference: {reference}.";
+        }
     }
 
     public async Task ReconcilePendingTransfersAsync(
         CancellationToken cancellationToken)
     {
-        await _reconciliationLock.WaitAsync(cancellationToken);
+        var pendingTransfers = _repository.GetPendingTransfers();
 
-        try
+        foreach (var pending in pendingTransfers)
         {
-            foreach (var entry in _pendingTransfers.ToArray())
+            cancellationToken.ThrowIfCancellationRequested();
+
+            try
             {
-                cancellationToken.ThrowIfCancellationRequested();
+                using HttpResponseMessage response =
+                    await _bankApiClient.GetTransferStatusAsync(
+                        pending.BankUrl,
+                        pending.Reference);
 
-                PendingInterbankTransfer pending = entry.Value;
+                if (!response.IsSuccessStatusCode)
+                    continue;
 
-                try
+                var confirmed =
+                    await response.Content.ReadFromJsonAsync
+                        <InterbankTransferRequestDto>(
+                            cancellationToken: cancellationToken);
+
+                if (confirmed == null)
+                    continue;
+
+                bool matches =
+                    confirmed.Reference == pending.Reference &&
+                    confirmed.SenderAccountNumber ==
+                        pending.SenderAccountNumber &&
+                    confirmed.RecipientAccountNumber ==
+                        pending.RecipientAccountNumber &&
+                    confirmed.Amount == pending.Amount;
+
+                if (!matches)
                 {
-                    using HttpResponseMessage response =
-                        await _bankApiClient.GetTransferStatusAsync(
-                            pending.BankUrl,
-                            pending.Request.Reference);
+                    _logger.LogWarning(
+                        "Interbank transfer details mismatch: {Reference}",
+                        pending.Reference);
 
-                    if (response.StatusCode == HttpStatusCode.NotFound)
-                    {
-                        
-                        continue;
-                    }
-
-                    if (!response.IsSuccessStatusCode)
-                        continue;
-
-                    InterbankTransferRequestDto? confirmed =
-                        await response.Content.ReadFromJsonAsync
-                            <InterbankTransferRequestDto>(
-                                cancellationToken: cancellationToken);
-
-                    if (confirmed == null)
-                        continue;
-
-                    bool matches =
-                        confirmed.Reference == pending.Request.Reference &&
-                        confirmed.SenderAccountNumber ==
-                            pending.Request.SenderAccountNumber &&
-                        confirmed.RecipientAccountNumber ==
-                            pending.Request.RecipientAccountNumber &&
-                        confirmed.Amount == pending.Request.Amount;
-
-                    if (!matches)
-                    {
-                        Console.WriteLine(
-                            $"\nWARNING: Interbank transfer details mismatch. " +
-                            $"Reference: {pending.Request.Reference}");
-                        continue;
-                    }
-
-                    if (_pendingTransfers.TryRemove(
-                        pending.Request.Reference, out _))
-                    {
-                        Console.WriteLine(
-                            $"\nInterbank transfer confirmed successful. " +
-                            $"Reference: {pending.Request.Reference}");
-                    }
+                    continue;
                 }
-                catch (OperationCanceledException)
-                    when (cancellationToken.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine(
-                        $"\nInterbank status check failed for " +
-                        $"{pending.Request.Reference}: {ex.Message}");
-                }
+
+                _repository.MarkSuccessful(pending.Reference);
+
+                _logger.LogInformation(
+                    "Interbank transfer confirmed: {Reference}",
+                    pending.Reference);
+            }
+            catch (OperationCanceledException)
+                when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Interbank reconciliation failed: {Reference}",
+                    pending.Reference);
             }
         }
-        finally
-        {
-            _reconciliationLock.Release();
-        }
     }
-
-    private sealed record PendingInterbankTransfer(
-        Account Sender,
-        string BankUrl,
-        InterbankTransferRequestDto Request);
 }

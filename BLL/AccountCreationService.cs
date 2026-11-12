@@ -1,15 +1,16 @@
 ﻿
 using System.Security.Cryptography;
+using TatumWelcome2.Interfaces;
 using TatumWelcome2.Models;
 
 namespace TatumWelcome2.BLL;
 
 public static class AccountCreationService
 {
-    private static readonly object CreationLock = new();
+    private const decimal MaximumBalance = 9999999999999999.99m;
 
     public static Account? CreateAccount(
-        List<Account> accounts,
+        IAccountRepository repository,
         string name,
         string phone,
         string pin,
@@ -17,52 +18,78 @@ public static class AccountCreationService
         decimal openingDeposit)
     {
         if (string.IsNullOrWhiteSpace(name) ||
+            string.IsNullOrWhiteSpace(city) ||
             string.IsNullOrWhiteSpace(phone) ||
             string.IsNullOrWhiteSpace(pin) ||
-            string.IsNullOrWhiteSpace(city) ||
-            openingDeposit < 1000)
+            phone.Length != 11 ||
+            !phone.All(char.IsDigit) ||
+            !phone.StartsWith("0") ||
+            pin.Length != 4 ||
+            !pin.All(char.IsDigit) ||
+            openingDeposit < 1000 ||
+            openingDeposit > MaximumBalance)
         {
             return null;
         }
 
-        lock (CreationLock)
+        for (int attempt = 0; attempt < 10; attempt++)
         {
+            string number =
+                $"00{RandomNumberGenerator.GetInt32(100_000_000):D8}";
+
+            if (repository.FindByAccountNumber(number) != null)
+                continue;
+
             Account account = new Account
             {
                 Name = name.Trim(),
                 Phone = phone.Trim(),
                 Branch = city.Trim(),
                 Pin = pin,
-                AccountNumber = GenerateAccountNumber(accounts)
+                AccountNumber = number
             };
 
-
-            bool deposited = account.Deposit(
-                openingDeposit,
-                "Opening deposit");
-
-            if (!deposited)
-            {
+            if (!account.Deposit(openingDeposit, "Opening deposit"))
                 return null;
+
+            AccountCreationResult result =
+                repository.CreateAccount(account);
+
+            if (result == AccountCreationResult.DuplicatePhone)
+            {
+                throw new InvalidOperationException(
+                    "This phone number is already registered.");
             }
 
-            accounts.Add(account);
+            if (result == AccountCreationResult.DuplicateAccountNumber)
+                continue;
 
             return account;
         }
+
+        return null;
     }
 
-    private static string GenerateAccountNumber(
-        List<Account> accounts)
+    public static Account? CreateAccount(
+        List<Account> accounts,
+        IAccountRepository repository,
+        string name,
+        string phone,
+        string pin,
+        string city,
+        decimal openingDeposit)
     {
-        string number;
+        Account? account = CreateAccount(
+            repository,
+            name,
+            phone,
+            pin,
+            city,
+            openingDeposit);
 
-        do
-        {
-            number = $"00{RandomNumberGenerator.GetInt32(100_000_000):D8}";
-        }
-        while (AccountService.FindAccount(accounts, number) != null);
+        if (account != null)
+            accounts.Add(account);
 
-        return number;
+        return account;
     }
 }

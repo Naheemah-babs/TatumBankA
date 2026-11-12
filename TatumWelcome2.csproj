@@ -8,4 +8,11 @@
     <UserSecretsId>da87026f-d8b7-4c17-b5ad-9f3e53b3af55</UserSecretsId>
   </PropertyGroup>
 
+  <ItemGroup>
+    <PackageReference Include="Dapper" Version="2.1.89" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.15" />
+    <PackageReference Include="MySqlConnector" Version="2.6.2" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="11.0.0" />
+  </ItemGroup>
+
 </Project>

@@ -9,10 +9,14 @@ namespace TatumWelcome2.Services;
 public class BankApiClient : IBankApiClient
 {
     private readonly HttpClient _httpClient;
+    private readonly IConfiguration _configuration;
 
-    public BankApiClient(HttpClient httpClient)
+    public BankApiClient(
+        HttpClient httpClient,
+        IConfiguration configuration)
     {
         _httpClient = httpClient;
+        _configuration = configuration;
     }
 
     public async Task<AccountLookupDto?> FindAccountAsync(
@@ -20,15 +24,17 @@ public class BankApiClient : IBankApiClient
         string accountNumber)
     {
         string url =
-            $"{bankUrl.TrimEnd('/')}/accounts/{accountNumber}";
+            $"{bankUrl.TrimEnd('/')}/accounts/" +
+            Uri.EscapeDataString(accountNumber);
+
+        using HttpRequestMessage message =
+            CreateRequest(HttpMethod.Get, url);
 
         using HttpResponseMessage response =
-            await _httpClient.GetAsync(url);
+            await _httpClient.SendAsync(message);
 
         if (response.StatusCode == HttpStatusCode.NotFound)
-        {
             return null;
-        }
 
         response.EnsureSuccessStatusCode();
 
@@ -36,17 +42,22 @@ public class BankApiClient : IBankApiClient
             .ReadFromJsonAsync<AccountLookupDto>();
     }
 
-    public Task<HttpResponseMessage> SendTransferAsync(
+    public async Task<HttpResponseMessage> SendTransferAsync(
         string bankUrl,
         InterbankTransferRequestDto request)
     {
         string url =
             $"{bankUrl.TrimEnd('/')}/transfers/receive";
 
-        return _httpClient.PostAsJsonAsync(url, request);
+        using HttpRequestMessage message =
+            CreateRequest(HttpMethod.Post, url);
+
+        message.Content = JsonContent.Create(request);
+
+        return await _httpClient.SendAsync(message);
     }
 
-    public Task<HttpResponseMessage> GetTransferStatusAsync(
+    public async Task<HttpResponseMessage> GetTransferStatusAsync(
         string bankUrl,
         string reference)
     {
@@ -54,16 +65,40 @@ public class BankApiClient : IBankApiClient
             $"{bankUrl.TrimEnd('/')}/transfers/status/" +
             Uri.EscapeDataString(reference);
 
-        return _httpClient.GetAsync(url);
+        using HttpRequestMessage message =
+            CreateRequest(HttpMethod.Get, url);
+
+        return await _httpClient.SendAsync(message);
     }
 
-    public Task<HttpResponseMessage> SendBillPaymentAsync(
+    public async Task<HttpResponseMessage> SendBillPaymentAsync(
         string bankUrl,
         BillPaymentRequestDto request)
     {
         string url =
             $"{bankUrl.TrimEnd('/')}/bills/pay";
 
-        return _httpClient.PostAsJsonAsync(url, request);
+        using HttpRequestMessage message =
+            CreateRequest(HttpMethod.Post, url);
+
+        message.Content = JsonContent.Create(request);
+
+        return await _httpClient.SendAsync(message);
+    }
+
+    private HttpRequestMessage CreateRequest(
+        HttpMethod method,
+        string url)
+    {
+        string apiKey =
+            _configuration["Interbank:ApiKey"]
+            ?? throw new InvalidOperationException(
+                "Interbank API key is not configured.");
+
+        var message = new HttpRequestMessage(method, url);
+
+        message.Headers.Add("X-Interbank-Key", apiKey);
+
+        return message;
     }
 }

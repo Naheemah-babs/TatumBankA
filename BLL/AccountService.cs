@@ -1,5 +1,7 @@
 ﻿
+using TatumWelcome2.Interfaces;
 using TatumWelcome2.Models;
+using TatumWelcome2.Services;
 
 namespace TatumWelcome2.BLL;
 
@@ -9,36 +11,28 @@ public class AccountService
         List<Account> accounts,
         string accountNumber)
     {
-        foreach (Account account in accounts)
-        {
-            if (account.AccountNumber == accountNumber)
-            {
-                return account;
-            }
-        }
-
-        return null;
+        return accounts.FirstOrDefault(
+            account => account.AccountNumber == accountNumber);
     }
 
     public static bool VerifyPin(Account account, string pin)
     {
+        if (account.Pin.StartsWith("PBKDF2$"))
+            return PinHasher.Verify(pin, account.Pin);
+
         return account.Pin == pin;
     }
 
     public static Account? Login(
-        List<Account> accounts,
+        IAccountRepository repository,
         string accountNumber,
         string pin)
     {
-        Account? account = FindAccount(
-            accounts,
-            accountNumber);
+        Account? account =
+            repository.FindByAccountNumber(accountNumber.Trim());
 
-        if (account == null ||
-            !VerifyPin(account, pin))
-        {
+        if (account == null || !VerifyPin(account, pin))
             return null;
-        }
 
         return account;
     }
@@ -48,11 +42,6 @@ public class AccountService
         Account to,
         decimal amount)
     {
-        return Account.TransferBetween(
-            from,
-            to,
-            amount);
+        return Account.TransferBetween(from, to, amount);
     }
 }
-
-

@@ -386,4 +386,21 @@ public class Account
             _isFrozen = false;
         }
     }
+
+
+    public void LoadFromDatabase(
+        decimal balance,
+        bool isFrozen,
+        IEnumerable<Transaction> transactions)
+    {
+        lock (BalanceLock)
+        {
+            _balance = balance;
+            _isFrozen = isFrozen;
+
+            _transactions.Clear();
+            _transactions.AddRange(transactions);
+        }
+    }
+
 }

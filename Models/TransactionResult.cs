@@ -18,4 +18,5 @@ public enum TransactionResult
     InvalidPlan,
     AccountFrozen,
     PaymentFailed,
+    BalanceLimitExceeded,
 }
