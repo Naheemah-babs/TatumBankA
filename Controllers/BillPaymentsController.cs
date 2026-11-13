@@ -39,6 +39,12 @@ public class BillPaymentsController : ControllerBase
         BillPaymentResponseDto response =
             _service.ProcessPayment(request);
 
+        if (response.Message ==
+            "Payment reference already used for another request.")
+        {
+            return Conflict(response);
+        }
+
         return Ok(response);
     }
 }
