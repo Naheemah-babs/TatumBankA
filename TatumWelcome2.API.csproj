@@ -15,4 +15,9 @@
     <PackageReference Include="Swashbuckle.AspNetCore" Version="11.0.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\TatumWelcome2.BLL\TatumWelcome2.BLL.csproj" />
+    <ProjectReference Include="..\TatumWelcome2.Infrastructure\TatumWelcome2.Infrastructure.csproj" />
+  </ItemGroup>
+
 </Project>

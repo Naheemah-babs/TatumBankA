@@ -1,29 +1,27 @@
-﻿
-using System.IdentityModel.Tokens.Jwt;
-using System.Security.Claims;
-using System.Text;
-using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
-using Microsoft.IdentityModel.Tokens;
-using TatumWelcome2.BLL;
-using TatumWelcome2.DTOs;
-using TatumWelcome2.Interfaces;
-using TatumWelcome2.Models;
+using TatumWelcome2.API.Mapping;
+using TatumWelcome2.API.Security;
+using TatumWelcome2.BLL.DTOs;
+using TatumWelcome2.BLL.IServices;
 
-namespace TatumWelcome2.Controllers;
+namespace TatumWelcome2.API.Controllers;
 
 [ApiController]
 public class AuthController : ControllerBase
 {
-    private readonly IAccountRepository _repository;
-    private readonly IConfiguration _configuration;
+    private readonly IAccountService _accountService;
+    private readonly IAccountCreationService _accountCreationService;
+    private readonly IJwtTokenService _tokenService;
 
     public AuthController(
-        IAccountRepository repository,
-        IConfiguration configuration)
+        IAccountService accountService,
+        IAccountCreationService accountCreationService,
+        IJwtTokenService tokenService)
     {
-        _repository = repository;
-        _configuration = configuration;
+        _accountService = accountService;
+        _accountCreationService = accountCreationService;
+        _tokenService = tokenService;
     }
 
     [HttpPost("/accounts")]
@@ -31,46 +29,8 @@ public class AuthController : ControllerBase
     public IActionResult CreateAccount(
         [FromBody] CreateAccountRequestDto request)
     {
-        try
-        {
-            Account? account =
-                AccountCreationService.CreateAccount(
-                    _repository,
-                    request.Name,
-                    request.Phone,
-                    request.Pin,
-                    request.City,
-                    request.OpeningDeposit);
-
-            if (account == null)
-            {
-                return BadRequest(new
-                {
-                    Message =
-                        "Invalid account details. Check your name, " +
-                        "phone number, PIN, city, and opening " +
-                        "deposit between 1000 and the maximum " +
-                        "supported balance."
-                });
-            }
-
-            return Created(
-                $"/accounts/{account.AccountNumber}",
-                new
-                {
-                    Message = "Account created successfully.",
-                    account.AccountNumber,
-                    account.Name,
-                    account.Branch,
-                    account.Balance
-                });
-        }
-        catch (InvalidOperationException ex)
-            when (ex.Message ==
-                "This phone number is already registered.")
-        {
-            return Conflict(new { Message = ex.Message });
-        }
+        return AuthResponses.AccountCreated(
+            _accountCreationService.CreateAccount(request));
     }
 
     [HttpPost("/auth/login")]
@@ -79,81 +39,15 @@ public class AuthController : ControllerBase
     public IActionResult Login(
         [FromBody] LoginRequestDto request)
     {
-        if (string.IsNullOrWhiteSpace(request.AccountNumber) ||
-            string.IsNullOrWhiteSpace(request.Pin))
-        {
-            return BadRequest(new
-            {
-                Message = "Account number and PIN are required."
-            });
-        }
-
-        Account? account = AccountService.Login(
-            _repository,
+        LoginResult result = _accountService.Login(
             request.AccountNumber,
             request.Pin);
 
-        if (account == null)
-        {
-            return Unauthorized(new
-            {
-                Message = "Invalid account number or PIN."
-            });
-        }
+        if (result.Account is null)
+            return AuthResponses.LoginFailed(result.Outcome);
 
-        string jwtKey = _configuration["Jwt:Key"]
-            ?? throw new InvalidOperationException(
-                "JWT signing key is missing.");
+        AccessToken token = _tokenService.CreateToken(result.Account.AccountNumber);
 
-        string jwtIssuer = _configuration["Jwt:Issuer"]
-            ?? throw new InvalidOperationException(
-                "JWT issuer is missing.");
-
-        string jwtAudience = _configuration["Jwt:Audience"]
-            ?? throw new InvalidOperationException(
-                "JWT audience is missing.");
-
-        var claims = new[]
-        {
-            new Claim(
-                JwtRegisteredClaimNames.Sub,
-                account.AccountNumber),
-
-            new Claim(
-                JwtRegisteredClaimNames.Jti,
-                Guid.NewGuid().ToString())
-        };
-
-        var securityKey = new SymmetricSecurityKey(
-            Encoding.UTF8.GetBytes(jwtKey));
-
-        var credentials = new SigningCredentials(
-            securityKey,
-            SecurityAlgorithms.HmacSha256);
-
-        DateTime expiresAt =
-            DateTime.UtcNow.AddMinutes(30);
-
-        var token = new JwtSecurityToken(
-            issuer: jwtIssuer,
-            audience: jwtAudience,
-            claims: claims,
-            expires: expiresAt,
-            signingCredentials: credentials);
-
-        string tokenString =
-            new JwtSecurityTokenHandler()
-                .WriteToken(token);
-
-        return Ok(new
-        {
-            Message = "Login successful.",
-            account.AccountNumber,
-            account.Name,
-            account.IsFrozen,
-            AccessToken = tokenString,
-            TokenType = "Bearer",
-            ExpiresAt = expiresAt
-        });
+        return AuthResponses.LoginSucceeded(result.Account, token);
     }
 }

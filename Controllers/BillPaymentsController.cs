@@ -1,20 +1,20 @@
-﻿
-using Microsoft.AspNetCore.Mvc;
-using TatumWelcome2.BLL;
-using TatumWelcome2.DTOs;
-using TatumWelcome2.Models;
+﻿using Microsoft.AspNetCore.Mvc;
+using TatumWelcome2.API.Mapping;
+using TatumWelcome2.BLL.DTOs;
+using TatumWelcome2.BLL.IServices;
+using TatumWelcome2.Domain.Models;
 using TatumWelcome2.Security;
 
-namespace TatumWelcome2.Controllers;
+namespace TatumWelcome2.API.Controllers;
 
 [ApiController]
 [Route("bills")]
 [Tags("Bill Payments")]
 public class BillPaymentsController : ControllerBase
 {
-    private readonly BillPaymentService _service;
+    private readonly IBillPaymentService _service;
 
-    public BillPaymentsController(BillPaymentService service)
+    public BillPaymentsController(IBillPaymentService service)
     {
         _service = service;
     }
@@ -34,17 +34,8 @@ public class BillPaymentsController : ControllerBase
     [InterbankApiKey]
     [HttpPost("pay")]
     public IActionResult Pay(
-        [FromBody] BillPaymentRequestDto request)
+        [FromBody] BillPaymentRequest request)
     {
-        BillPaymentResponseDto response =
-            _service.ProcessPayment(request);
-
-        if (response.Message ==
-            "Payment reference already used for another request.")
-        {
-            return Conflict(response);
-        }
-
-        return Ok(response);
+        return BillPaymentResponses.Pay(_service.ProcessPayment(request));
     }
 }

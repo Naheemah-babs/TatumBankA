@@ -1,23 +1,21 @@
-﻿
-using Microsoft.AspNetCore.Authorization;
+﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using System.Security.Claims;
-using TatumWelcome2.DTOs;
-using TatumWelcome2.Interfaces;
-using TatumWelcome2.Models;
+using TatumWelcome2.API.Mapping;
+using TatumWelcome2.API.Security;
+using TatumWelcome2.BLL.IServices;
 using TatumWelcome2.Security;
 
-namespace TatumWelcome2.Controllers;
+namespace TatumWelcome2.API.Controllers;
 
 [ApiController]
 [Route("accounts")]
 public class AccountsController : ControllerBase
 {
-    private readonly IAccountRepository _repository;
+    private readonly IAccountService _accountService;
 
-    public AccountsController(IAccountRepository repository)
+    public AccountsController(IAccountService accountService)
     {
-        _repository = repository;
+        _accountService = accountService;
     }
 
     [InterbankApiKey]
@@ -25,17 +23,7 @@ public class AccountsController : ControllerBase
     [Tags("Interbank Account Lookup")]
     public IActionResult FindAccount(string number)
     {
-        Account? account =
-            _repository.FindByAccountNumber(number);
-
-        if (account == null)
-            return NotFound("Account not found.");
-
-        return Ok(new AccountLookupDto
-        {
-            AccountNumber = account.AccountNumber,
-            Name = account.Name
-        });
+        return AccountResponses.Lookup(_accountService.LookupAccount(number));
     }
 
     [Authorize]
@@ -43,24 +31,12 @@ public class AccountsController : ControllerBase
     [Tags("Customer Banking")]
     public IActionResult GetBalance()
     {
-        string? accountNumber = GetAccountNumber();
+        string? accountNumber = User.GetAccountNumber();
 
-        if (string.IsNullOrWhiteSpace(accountNumber))
+        if (accountNumber is null)
             return Unauthorized();
 
-        Account? account =
-            _repository.FindByAccountNumber(accountNumber);
-
-        if (account == null)
-            return NotFound(new { Message = "Account not found." });
-
-        return Ok(new
-        {
-            account.AccountNumber,
-            account.Name,
-            account.Balance,
-            account.IsFrozen
-        });
+        return AccountResponses.Balance(_accountService.GetBalance(accountNumber));
     }
 
     [Authorize]
@@ -68,37 +44,12 @@ public class AccountsController : ControllerBase
     [Tags("Customer Banking")]
     public IActionResult GetTransactions()
     {
-        string? accountNumber = GetAccountNumber();
+        string? accountNumber = User.GetAccountNumber();
 
-        if (string.IsNullOrWhiteSpace(accountNumber))
+        if (accountNumber is null)
             return Unauthorized();
 
-        Account? account =
-            _repository.FindByAccountNumber(accountNumber);
-
-        if (account == null)
-            return NotFound(new { Message = "Account not found." });
-
-        return Ok(new
-        {
-            account.AccountNumber,
-            Transactions = account.Transactions
-                .OrderByDescending(t => t.Date)
-                .Select(t => new
-                {
-                    Type = t.Type.ToString(),
-                    t.Amount,
-                    t.Date,
-                    t.Description,
-                    t.Reference
-                })
-                .ToList()
-        });
-    }
-
-    private string? GetAccountNumber()
-    {
-        return User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-            ?? User.FindFirst("sub")?.Value;
+        return AccountResponses.History(
+            _accountService.GetTransactionHistory(accountNumber));
     }
 }

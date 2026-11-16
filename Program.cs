@@ -1,16 +1,14 @@
-﻿
-using Dapper;
-using Microsoft.AspNetCore.Authentication.JwtBearer;
+﻿using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
 using System.Security.Claims;
 using System.Text;
 using System.Threading.RateLimiting;
+using TatumWelcome2.API.Security;
 using TatumWelcome2.BLL;
-using TatumWelcome2.Database;
-using TatumWelcome2.Interfaces;
-using TatumWelcome2.Repositories;
-using TatumWelcome2.Services;
+using TatumWelcome2.BLL.IServices;
+using TatumWelcome2.BLL.Options;
+using TatumWelcome2.Infrastructure;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -135,36 +133,32 @@ builder.Services.AddSwaggerGen(options =>
             Description = "Enter your admin API key."
         });
 
-    // Security requirements will be applied to
-    // the appropriate controller actions.
+    // Without a requirement Swagger UI shows the Authorize button but
+    // never attaches the token, so [Authorize] endpoints return 401.
+    options.AddSecurityRequirement(document =>
+        new OpenApiSecurityRequirement
+        {
+            [new OpenApiSecuritySchemeReference("Bearer", document)] = []
+        });
 });
 
-// MySQL database connection.
-builder.Services.AddSingleton<DbConnectionFactory>();
+// Repositories, MySQL connection factory and bank-to-bank HTTP client.
+builder.Services.AddTatumInfrastructure();
 
-// Account repository using Dapper.
-builder.Services.AddSingleton<
-    IAccountRepository,
-    AccountRepository>();
+// Business services (scoped) and stateless helpers.
+builder.Services.AddTatumBusinessLogic();
 
-// Bank-to-bank HTTP communication.
-builder.Services.AddHttpClient<
-    IBankApiClient,
-    BankApiClient>();
+// Partner bank for outgoing interbank transfers (Banks:BankB:Url).
+builder.Services.Configure<InterBankOptions>(
+    builder.Configuration.GetSection(InterBankOptions.SectionName));
 
-// Business logic services.
-builder.Services.AddSingleton<InterbankTransferService>();
-builder.Services.AddSingleton<InterbankOutgoingTransferService>();
-builder.Services.AddSingleton<AdminService>();
-builder.Services.AddSingleton<BillPaymentService>();
-builder.Services.AddSingleton<OutgoingInterbankTransferRepository>();
-builder.Services.AddSingleton<IncomingInterbankTransferRepository>();
-builder.Services.AddSingleton<BillPaymentRepository>();
+// Customer JWT issuing (same Jwt section the bearer validation above uses).
+builder.Services.Configure<JwtOptions>(
+    builder.Configuration.GetSection(JwtOptions.SectionName));
+builder.Services.AddSingleton<IJwtTokenService, JwtTokenService>();
 
-
-// Automatic interbank reconciliation.
-builder.Services.AddHostedService<
-    InterbankReconciliationService>();
+// Interbank reconciliation runs in the
+// TatumWelcome2.TransactionReconciliation.Processor service.
 
 // Reduce unnecessary logging.
 builder.Logging.AddFilter(
@@ -191,30 +185,27 @@ app.UseRateLimiter();
 
 app.UseAuthorization();
 
-// Test MySQL connection.
+// Convert any legacy plain-text PINs to PBKDF2 hashes (idempotent).
 try
 {
-    var connectionFactory =
-        app.Services.GetRequiredService<DbConnectionFactory>();
+    using IServiceScope scope = app.Services.CreateScope();
 
-    using var connection =
-        connectionFactory.CreateConnection();
+    int migrated = scope.ServiceProvider
+        .GetRequiredService<IPinMigrationService>()
+        .HashLegacyPins();
 
-    connection.Open();
-
-    int result =
-        connection.ExecuteScalar<int>("SELECT 1");
-
-    app.Logger.LogInformation(
-        result == 1
-            ? "MySQL connection successful!"
-            : "MySQL connection test failed.");
+    if (migrated > 0)
+    {
+        app.Logger.LogWarning(
+            "Hashed {Count} legacy plain-text PIN(s).",
+            migrated);
+    }
 }
 catch (Exception ex)
 {
     app.Logger.LogError(
         ex,
-        "MySQL connection error.");
+        "Legacy PIN migration failed.");
 }
 
 // Map all controller endpoints.
@@ -222,3 +213,4 @@ app.MapControllers();
 
 // Start the Web API.
 app.Run();
+

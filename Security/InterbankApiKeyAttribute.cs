@@ -1,14 +1,18 @@
 ﻿
-using System.Security.Cryptography;
-using System.Text;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
+using System.Security.Cryptography;
+using System.Text;
+using TatumWelcome2.API.Security;
+using TatumWelcome2.BLL.DTOs;
 
 namespace TatumWelcome2.Security;
 
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Method)]
 public sealed class InterbankApiKeyAttribute : Attribute, IAuthorizationFilter
 {
+    public const string HeaderName = "X-Interbank-Key";
+
     public void OnAuthorization(AuthorizationFilterContext context)
     {
         IConfiguration configuration =
@@ -21,21 +25,15 @@ public sealed class InterbankApiKeyAttribute : Attribute, IAuthorizationFilter
                 "Interbank API key is not configured.");
 
         string suppliedKey =
-            context.HttpContext.Request.Headers[
-                "X-Interbank-Key"].ToString();
+            context.HttpContext.Request.Headers[HeaderName].ToString();
 
-        byte[] expectedBytes = Encoding.UTF8.GetBytes(expectedKey);
-        byte[] suppliedBytes = Encoding.UTF8.GetBytes(suppliedKey);
-
-        if (expectedBytes.Length != suppliedBytes.Length ||
-            !CryptographicOperations.FixedTimeEquals(
-                expectedBytes,
-                suppliedBytes))
+        if (!ApiKeyComparer.Matches(expectedKey, suppliedKey))
         {
-            context.Result = new UnauthorizedObjectResult(new
-            {
-                Message = "Invalid or missing interbank API key."
-            });
+            context.Result = new UnauthorizedObjectResult(
+                new MessageResponseDto
+                {
+                    Message = "Invalid or missing interbank API key."
+                });
         }
     }
 }

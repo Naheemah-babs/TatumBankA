@@ -1,54 +1,10 @@
-﻿
-using System.Security.Cryptography;
-using System.Text;
-using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.Mvc.Filters;
-using TatumWelcome2.BLL;
-using TatumWelcome2.Models;
+﻿using Microsoft.AspNetCore.Mvc;
+using TatumWelcome2.API.Mapping;
+using TatumWelcome2.API.Security;
+using TatumWelcome2.BLL.DTOs;
+using TatumWelcome2.BLL.IServices;
 
-namespace TatumWelcome2.Controllers;
-
-[AttributeUsage(AttributeTargets.Class | AttributeTargets.Method)]
-public sealed class AdminApiKeyAttribute : Attribute, IAsyncAuthorizationFilter
-{
-    public Task OnAuthorizationAsync(
-        AuthorizationFilterContext context)
-    {
-        IConfiguration configuration =
-            context.HttpContext.RequestServices
-                .GetRequiredService<IConfiguration>();
-
-        string expectedKey =
-            configuration["Admin:ApiKey"]
-            ?? throw new InvalidOperationException(
-                "Admin API key is missing.");
-
-        string suppliedKey =
-            context.HttpContext.Request.Headers[
-                "X-Admin-Key"].ToString();
-
-        byte[] expectedBytes =
-            Encoding.UTF8.GetBytes(expectedKey);
-
-        byte[] suppliedBytes =
-            Encoding.UTF8.GetBytes(suppliedKey);
-
-        if (expectedBytes.Length != suppliedBytes.Length ||
-            !CryptographicOperations.FixedTimeEquals(
-                expectedBytes,
-                suppliedBytes))
-        {
-            context.Result = new UnauthorizedResult();
-        }
-
-        return Task.CompletedTask;
-    }
-}
-
-public sealed class PaymentModeRequest
-{
-    public string Mode { get; set; } = "";
-}
+namespace TatumWelcome2.API.Controllers;
 
 [ApiController]
 [Route("admin")]
@@ -56,12 +12,12 @@ public sealed class PaymentModeRequest
 [AdminApiKey]
 public class AdminController : ControllerBase
 {
-    private readonly AdminService _adminService;
-    private readonly BillPaymentService _billPaymentService;
+    private readonly IAdminService _adminService;
+    private readonly IBillPaymentService _billPaymentService;
 
     public AdminController(
-        AdminService adminService,
-        BillPaymentService billPaymentService)
+        IAdminService adminService,
+        IBillPaymentService billPaymentService)
     {
         _adminService = adminService;
         _billPaymentService = billPaymentService;
@@ -70,109 +26,41 @@ public class AdminController : ControllerBase
     [HttpGet("accounts/{accountNumber}")]
     public IActionResult GetAccount(string accountNumber)
     {
-        Account? account =
-            _adminService.FindAccount(accountNumber);
-
-        if (account == null)
-            return NotFound(new { Message = "Account not found." });
-
-        return Ok(new
-        {
-            account.AccountNumber,
-            account.Name,
-            account.IsFrozen
-        });
+        return AdminResponses.AccountSummary(
+            _adminService.GetAccountSummary(accountNumber));
     }
 
     [HttpPut("accounts/{accountNumber}/freeze")]
     public IActionResult FreezeAccount(string accountNumber)
     {
-        Account? account =
-            _adminService.FindAccount(accountNumber);
-
-        if (account == null)
-            return NotFound(new { Message = "Account not found." });
-
-        if (account.IsFrozen)
-            return Ok(new { Message = "Account is already frozen." });
-
-        bool successful =
-            _adminService.FreezeAccount(accountNumber);
-
-        if (!successful)
-        {
-            return Conflict(new
-            {
-                Message = "Account status could not be updated."
-            });
-        }
-
-        return Ok(new
-        {
-            Message = "Account frozen successfully.",
-            AccountNumber = accountNumber
-        });
+        return AdminResponses.StatusChange(
+            _adminService.Freeze(accountNumber),
+            accountNumber,
+            freeze: true);
     }
 
     [HttpPut("accounts/{accountNumber}/unfreeze")]
     public IActionResult UnfreezeAccount(string accountNumber)
     {
-        Account? account =
-            _adminService.FindAccount(accountNumber);
-
-        if (account == null)
-            return NotFound(new { Message = "Account not found." });
-
-        if (!account.IsFrozen)
-            return Ok(new { Message = "Account is already active." });
-
-        bool successful =
-            _adminService.UnfreezeAccount(accountNumber);
-
-        if (!successful)
-        {
-            return Conflict(new
-            {
-                Message = "Account status could not be updated."
-            });
-        }
-
-        return Ok(new
-        {
-            Message = "Account unfrozen successfully.",
-            AccountNumber = accountNumber
-        });
+        return AdminResponses.StatusChange(
+            _adminService.Unfreeze(accountNumber),
+            accountNumber,
+            freeze: false);
     }
 
     [HttpGet("payment-mode")]
     public IActionResult GetPaymentMode()
     {
-        return Ok(new
-        {
-            PaymentMode = _billPaymentService.PaymentMode
-        });
+        return AdminResponses.PaymentMode(_billPaymentService.PaymentMode);
     }
 
     [HttpPut("payment-mode")]
     public IActionResult SetPaymentMode(
-        [FromBody] PaymentModeRequest request)
+        [FromBody] PaymentModeRequestDto request)
     {
-        bool successful =
-            _billPaymentService.SetPaymentMode(request.Mode);
+        if (!_billPaymentService.SetPaymentMode(request.Mode))
+            return AdminResponses.InvalidPaymentMode();
 
-        if (!successful)
-        {
-            return BadRequest(new
-            {
-                Message =
-                    "Invalid mode. Choose Random, Success, or Failure."
-            });
-        }
-
-        return Ok(new
-        {
-            Message = "Payment mode updated successfully.",
-            PaymentMode = _billPaymentService.PaymentMode
-        });
+        return AdminResponses.PaymentModeUpdated(_billPaymentService.PaymentMode);
     }
 }

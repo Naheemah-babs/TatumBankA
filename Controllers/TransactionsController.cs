@@ -1,12 +1,13 @@
-﻿
-using Microsoft.AspNetCore.Authorization;
+﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
-using System.Security.Claims;
-using TatumWelcome2.DTOs;
-using TatumWelcome2.Interfaces;
+using TatumWelcome2.API.Mapping;
+using TatumWelcome2.API.Security;
+using TatumWelcome2.BLL.DTOs;
+using TatumWelcome2.BLL.IServices;
+using TatumWelcome2.Domain.Models;
 
-namespace TatumWelcome2.Controllers;
+namespace TatumWelcome2.API.Controllers;
 
 [ApiController]
 [Authorize]
@@ -14,57 +15,26 @@ namespace TatumWelcome2.Controllers;
 [Tags("Customer Transactions")]
 public class TransactionsController : ControllerBase
 {
-    private readonly IAccountRepository _repository;
+    private readonly IAccountService _accountService;
 
-    public TransactionsController(IAccountRepository repository)
+    public TransactionsController(IAccountService accountService)
     {
-        _repository = repository;
+        _accountService = accountService;
     }
 
     [HttpPost("deposit")]
     public IActionResult Deposit(
         [FromBody] DepositRequestDto request)
     {
-        string? accountNumber = GetAccountNumber();
+        string? accountNumber = User.GetAccountNumber();
 
-        if (string.IsNullOrWhiteSpace(accountNumber))
+        if (accountNumber is null)
             return Unauthorized();
 
         TransactionResult result =
-            _repository.Deposit(accountNumber, request.Amount);
+            _accountService.Deposit(accountNumber, request.Amount);
 
-        return result switch
-        {
-            TransactionResult.Success =>
-                Ok(new
-                {
-                    Message = "Deposit successful.",
-                    request.Amount,
-                    AccountNumber = accountNumber
-                }),
-
-            TransactionResult.InvalidAmount =>
-                BadRequest(new
-                {
-                    Message = "Deposit amount must be greater than zero."
-                }),
-
-            TransactionResult.AccountNotFound =>
-                NotFound(new { Message = "Account not found." }),
-
-            TransactionResult.AccountFrozen =>
-                BadRequest(new { Message = "Account is frozen." }),
-
-            TransactionResult.BalanceLimitExceeded =>
-                BadRequest(new
-                {
-                    Message =
-                        "Deposit failed. Account balance limit " +
-                        "would be exceeded."
-                }),
-
-            _ => BadRequest(new { Message = "Deposit failed." })
-        };
+        return TransactionResponses.Deposit(result, accountNumber, request.Amount);
     }
 
     [HttpPost("withdraw")]
@@ -72,48 +42,17 @@ public class TransactionsController : ControllerBase
     public IActionResult Withdraw(
         [FromBody] WithdrawRequestDto request)
     {
-        string? accountNumber = GetAccountNumber();
+        string? accountNumber = User.GetAccountNumber();
 
-        if (string.IsNullOrWhiteSpace(accountNumber))
+        if (accountNumber is null)
             return Unauthorized();
 
-        if (string.IsNullOrWhiteSpace(request.Pin))
-            return BadRequest(new { Message = "PIN is required." });
-
-        TransactionResult result = _repository.Withdraw(
+        TransactionResult result = _accountService.Withdraw(
             accountNumber,
             request.Amount,
             request.Pin);
 
-        return result switch
-        {
-            TransactionResult.Success =>
-                Ok(new
-                {
-                    Message = "Withdrawal successful.",
-                    request.Amount
-                }),
-
-            TransactionResult.InvalidPin =>
-                BadRequest(new { Message = "Incorrect PIN." }),
-
-            TransactionResult.AccountFrozen =>
-                BadRequest(new { Message = "Account is frozen." }),
-
-            TransactionResult.InsufficientFunds =>
-                BadRequest(new { Message = "Insufficient funds." }),
-
-            TransactionResult.InvalidAmount =>
-                BadRequest(new
-                {
-                    Message = "Withdrawal amount must be greater than zero."
-                }),
-
-            TransactionResult.AccountNotFound =>
-                NotFound(new { Message = "Account not found." }),
-
-            _ => BadRequest(new { Message = "Withdrawal failed." })
-        };
+        return TransactionResponses.Withdraw(result, request.Amount);
     }
 
     [HttpPost("transfers")]
@@ -121,87 +60,20 @@ public class TransactionsController : ControllerBase
     public IActionResult Transfer(
         [FromBody] IntrabankTransferRequestDto request)
     {
-        string? senderNumber = GetAccountNumber();
+        string? senderNumber = User.GetAccountNumber();
 
-        if (string.IsNullOrWhiteSpace(senderNumber))
+        if (senderNumber is null)
             return Unauthorized();
 
-        if (string.IsNullOrWhiteSpace(
-            request.RecipientAccountNumber))
-        {
-            return BadRequest(new
-            {
-                Message = "Recipient account number is required."
-            });
-        }
-
-        if (string.IsNullOrWhiteSpace(request.Pin))
-            return BadRequest(new { Message = "PIN is required." });
-
-        TransactionResult result = _repository.Transfer(
+        TransactionResult result = _accountService.Transfer(
             senderNumber,
             request.RecipientAccountNumber,
             request.Amount,
             request.Pin);
 
-        return result switch
-        {
-            TransactionResult.Success =>
-                Ok(new
-                {
-                    Message = "Transfer successful.",
-                    request.RecipientAccountNumber,
-                    request.Amount
-                }),
-
-            TransactionResult.SameAccount =>
-                BadRequest(new
-                {
-                    Message = "You cannot transfer to your own account."
-                }),
-
-            TransactionResult.InvalidPin =>
-                BadRequest(new { Message = "Incorrect PIN." }),
-
-            TransactionResult.AccountFrozen =>
-                BadRequest(new { Message = "Account is frozen." }),
-
-            TransactionResult.InsufficientFunds =>
-                BadRequest(new { Message = "Insufficient funds." }),
-
-            TransactionResult.InvalidAmount =>
-                BadRequest(new
-                {
-                    Message = "Transfer amount must be greater than zero."
-                }),
-
-            TransactionResult.InvalidRecipient =>
-                BadRequest(new
-                {
-                    Message = "Recipient account not found."
-                }),
-
-            TransactionResult.AccountNotFound =>
-                NotFound(new
-                {
-                    Message = "Sender account not found."
-                }),
-
-            TransactionResult.BalanceLimitExceeded =>
-                BadRequest(new
-                {
-                    Message =
-                        "Transfer failed. Recipient account " +
-                        "balance limit would be exceeded."
-                }),
-
-            _ => BadRequest(new { Message = "Transfer failed." })
-        };
-    }
-
-    private string? GetAccountNumber()
-    {
-        return User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-            ?? User.FindFirst("sub")?.Value;
+        return TransactionResponses.Transfer(
+            result,
+            request.RecipientAccountNumber,
+            request.Amount);
     }
 }

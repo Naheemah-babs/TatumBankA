@@ -1,7 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Text;
-using TatumWelcome2.Models;
+using TatumWelcome2.Domain.Models;
+
 
 namespace TatumWelcome2
 {
