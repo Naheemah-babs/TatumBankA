@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "TatumWelcome2.TransactionReconciliation.Processor": {
+      "commandName": "Project",
+      "environmentVariables": {
+        "DOTNET_ENVIRONMENT": "Development"
+      }
+    }
+  }
+}

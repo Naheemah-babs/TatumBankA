@@ -1,0 +1,28 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<OutputType>Exe</OutputType>
+		<TargetFramework>net10.0</TargetFramework>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+		<!-- Same id as the API project, so both programs read the SAME user secrets -->
+		<UserSecretsId>da87026f-d8b7-4c17-b5ad-9f3e53b3af55</UserSecretsId>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.0" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\TatumWelcome2.BLL\TatumWelcome2.BLL.csproj" />
+		<ProjectReference Include="..\TatumWelcome2.Domain\TatumWelcome2.Domain.csproj" />
+		<ProjectReference Include="..\TatumWelcome2.Infrastructure\TatumWelcome2.Infrastructure.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<None Update="appsettings.json">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+	</ItemGroup>
+
+</Project>
