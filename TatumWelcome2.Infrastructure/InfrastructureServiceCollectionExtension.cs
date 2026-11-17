@@ -25,9 +25,12 @@ namespace TatumWelcome2.Infrastructure
             services.AddSingleton<IBillPaymentRepository, BillPaymentRepository>();
             services.AddSingleton<IIncomingInterbankTransferRepository, IncomingInterbankTransferRepository>();
             services.AddSingleton<IInterbankOutgoingTransferRepository, OutgoingInterbankTransferRepository>();
-            
+
             // Typed client: transient by design.
-            services.AddHttpClient<IBankApiClient, BankApiClient>();
+            services.AddHttpClient<IBankApiClient, BankApiClient>(client =>
+            {
+                client.Timeout = TimeSpan.FromSeconds(5);
+            });
 
             return services;
         }

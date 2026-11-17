@@ -1,4 +1,7 @@
 <Solution>
+  <Folder Name="/Solution Items/">
+    <File Path="../README.md" />
+  </Folder>
   <Project Path="../TatumWelcome2.BLL/TatumWelcome2.BLL.csproj" Id="8bd4a744-7e97-4bee-9e3c-a4f577c33d78" />
   <Project Path="../TatumWelcome2.Domain/TatumWelcome2.Domain.csproj" Id="5682965d-d122-41a0-a662-dccd7c31d388" />
   <Project Path="../TatumWelcome2.Infrastructure/TatumWelcome2.Infrastructure.csproj" Id="026bfa5e-f9ce-48ba-8d39-49848c57a790" />
