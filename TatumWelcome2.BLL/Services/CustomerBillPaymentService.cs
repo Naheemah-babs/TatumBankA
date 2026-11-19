@@ -31,6 +31,12 @@ public sealed class CustomerBillPaymentService : ICustomerBillPaymentService
         if (!TryResolveReference(request.Reference, out string reference))
             return InvalidReference(request.Reference, request.Amount);
 
+        // Clean the number once, here, so the stored value is always 11 digits.
+        string? phoneError = InputValidator.ValidatePhone(request.PhoneNumber, out string phone);
+
+        if (phoneError != null)
+            return Invalid(reference, phoneError, request.Amount);
+
         BillPaymentRequest bill = new()
         {
             Reference = reference,
@@ -38,7 +44,7 @@ public sealed class CustomerBillPaymentService : ICustomerBillPaymentService
             AccountNumber = accountNumber,
             PaymentType = BillPaymentTypes.Airtime,
             Network = request.Network,
-            PhoneNumber = request.PhoneNumber,
+            PhoneNumber = phone,
             Amount = request.Amount
         };
 
@@ -46,7 +52,7 @@ public sealed class CustomerBillPaymentService : ICustomerBillPaymentService
             bill,
             request.Pin,
             TransactionType.AirtimePurchase,
-            TransactionDescriptions.Airtime(request.Network, request.PhoneNumber, reference));
+            TransactionDescriptions.Airtime(request.Network, phone, reference));
     }
 
     public BillPurchaseResult BuyData(
@@ -58,6 +64,11 @@ public sealed class CustomerBillPaymentService : ICustomerBillPaymentService
 
         if (!TryResolveReference(request.Reference, out string reference))
             return InvalidReference(request.Reference, 0m);
+
+        string? phoneError = InputValidator.ValidatePhone(request.PhoneNumber, out string phone);
+
+        if (phoneError != null)
+            return Invalid(reference, phoneError, 0m);
 
         DataPlan? plan = DataPlans.DataPlanItems.FirstOrDefault(
             item => string.Equals(
@@ -75,7 +86,7 @@ public sealed class CustomerBillPaymentService : ICustomerBillPaymentService
             AccountNumber = accountNumber,
             PaymentType = BillPaymentTypes.Data,
             Network = request.Network,
-            PhoneNumber = request.PhoneNumber,
+            PhoneNumber = phone,
             Amount = plan.Price,
             DataPlanName = plan.Name
         };
@@ -84,7 +95,7 @@ public sealed class CustomerBillPaymentService : ICustomerBillPaymentService
             bill,
             request.Pin,
             TransactionType.DataPurchase,
-            TransactionDescriptions.Data(request.Network, plan.Name, request.PhoneNumber, reference));
+            TransactionDescriptions.Data(request.Network, plan.Name, phone, reference));
     }
 
     private BillPurchaseResult Purchase(

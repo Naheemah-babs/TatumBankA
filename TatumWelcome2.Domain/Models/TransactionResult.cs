@@ -22,4 +22,6 @@ public enum TransactionResult
     DuplicateReference,
     PinRequired,
     RecipientRequired,
+    AmountNotWholeNumber,
+    AmountOutOfRange,
 }

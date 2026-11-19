@@ -57,6 +57,13 @@ builder.Services
 
 builder.Services.AddAuthorization();
 
+// Account creation limit comes from configuration, so Development can be generous.
+int createAccountLimit =
+    builder.Configuration.GetValue<int>("RateLimits:CreateAccountPerWindow", 10);
+
+int createAccountWindowMinutes =
+    builder.Configuration.GetValue<int>("RateLimits:CreateAccountWindowMinutes", 10);
+
 // Configure rate limiting.
 builder.Services.AddRateLimiter(options =>
 {
@@ -75,6 +82,23 @@ builder.Services.AddRateLimiter(options =>
             {
                 PermitLimit = 5,
                 Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            });
+    });
+
+    // Limit account creation per IP address.
+    options.AddPolicy("create-account", context =>
+    {
+        string ip = context.Connection.RemoteIpAddress?
+            .ToString() ?? "unknown";
+
+        return RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: ip,
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = createAccountLimit,
+                Window = TimeSpan.FromMinutes(createAccountWindowMinutes),
                 QueueLimit = 0,
                 AutoReplenishment = true
             });

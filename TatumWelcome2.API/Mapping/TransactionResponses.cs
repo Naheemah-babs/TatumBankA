@@ -21,7 +21,13 @@ namespace TatumWelcome2.API.Mapping
                     }),
 
                 TransactionResult.InvalidAmount =>
-                    ApiResponse.BadRequest("Deposit amount must be greater than zero."),
+    ApiResponse.BadRequest("Invalid amount."),
+                TransactionResult.AmountNotWholeNumber =>
+    ApiResponse.BadRequest("Amount must be a whole number, with no decimal places."),
+
+                TransactionResult.AmountOutOfRange =>
+                    ApiResponse.BadRequest(
+                        $"Amount must be more than 500 and not more than {AccountLimits.MaximumBalance:N0}."),
 
                 TransactionResult.AccountNotFound =>
                     ApiResponse.NotFound("Account not found."),

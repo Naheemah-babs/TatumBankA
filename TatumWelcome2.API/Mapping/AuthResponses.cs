@@ -21,6 +21,17 @@ namespace TatumWelcome2.API.Mapping
                             Balance = account.Balance
                         }),
 
+                { Status: CreateAccountStatus.InvalidDetails, Errors: { Count: > 0 } errors } =>
+                    new BadRequestObjectResult(new
+                    {
+                        message = "Some account details are invalid.",
+                        errors = errors.Select(error => new
+                        {
+                            field = error.Field,
+                            message = error.Message
+                        })
+                    }),
+
                 { Status: CreateAccountStatus.DuplicatePhone } =>
                     ApiResponse.Conflict("This phone number is already registered."),
 
@@ -28,18 +39,32 @@ namespace TatumWelcome2.API.Mapping
                     ApiResponse.ServiceUnavailable(
                         "Could not allocate an account number. Please try again."),
 
-                _ =>
-                    ApiResponse.BadRequest(
-                        "Invalid account details. Check your name, " +
-                        "phone number, PIN, city, and opening " +
-                        "deposit between 1000 and the maximum " +
-                        "supported balance.")
+                _ => ApiResponse.BadRequest("Invalid account details.")
             };
 
-        public static IActionResult LoginFailed(LoginOutcome outcome) =>
-            outcome == LoginOutcome.MissingCredentials
-                ? ApiResponse.BadRequest("Account number and PIN are required.")
-                : ApiResponse.Unauthorized("Invalid account number or PIN.");
+        public static IActionResult LoginFailed(LoginResult result) =>
+    result.Outcome switch
+    {
+        LoginOutcome.MissingCredentials =>
+            ApiResponse.BadRequest("Account number and PIN are required."),
+
+        LoginOutcome.AccountLocked =>
+            new ObjectResult(new
+            {
+                message = LockedMessage(result.RetryAfterSeconds)
+            })
+            { StatusCode = 429 },
+
+        _ => ApiResponse.Unauthorized("Incorrect account number or PIN.")
+    };
+
+        private static string LockedMessage(int seconds)
+        {
+            int minutes = Math.Max(1, (int)Math.Ceiling(seconds / 60.0));
+
+            return "Too many incorrect attempts. Try again in " +
+                   (minutes == 1 ? "1 minute." : $"{minutes} minutes.");
+        }
 
         public static IActionResult LoginSucceeded(Account account, AccessToken token) =>
             new OkObjectResult(new LoginResponseDto

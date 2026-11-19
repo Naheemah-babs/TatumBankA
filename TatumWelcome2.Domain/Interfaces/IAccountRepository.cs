@@ -58,4 +58,7 @@ public interface IAccountRepository
 
     /// <summary>Replaces the stored PIN only if it still equals <paramref name="currentValue"/>.</summary>
     bool ReplacePinHash(string accountNumber, string currentValue, string newHash);
+    PinAttemptOutcome VerifyPinWithLockout(string accountNumber, string pin);
+
+    int GetLockSecondsRemaining(string accountNumber);
 }

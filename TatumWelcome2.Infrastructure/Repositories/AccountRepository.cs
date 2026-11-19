@@ -418,7 +418,138 @@ public sealed class AccountRepository : IAccountRepository
 
         return updated == 1;
     }
+    public PinAttemptOutcome VerifyPinWithLockout(string accountNumber, string pin)
+    {
+        using var connection = _connectionFactory.CreateConnection();
+        connection.Open();
 
+        using var transaction = connection.BeginTransaction();
+
+        try
+        {
+            // The row lock makes parallel guesses queue up, so none can dodge the counter.
+            PinStateRow? row = connection.QuerySingleOrDefault<PinStateRow>(
+                """
+                SELECT PinHash,
+                       CASE WHEN LockedUntil IS NOT NULL
+                                 AND LockedUntil > UTC_TIMESTAMP()
+                            THEN TIMESTAMPDIFF(SECOND, UTC_TIMESTAMP(), LockedUntil)
+                            ELSE 0 END AS LockSecondsRemaining
+                FROM Accounts
+                WHERE AccountNumber = @AccountNumber
+                FOR UPDATE;
+                """,
+                new { AccountNumber = accountNumber },
+                transaction);
+
+            if (row == null)
+            {
+                transaction.Rollback();
+                return PinAttemptOutcome.AccountNotFound;
+            }
+
+            // Locked: refuse without checking the PIN and without counting the attempt.
+            if (row.LockSecondsRemaining > 0)
+            {
+                transaction.Rollback();
+                return PinAttemptOutcome.Locked;
+            }
+
+            if (_pinHasher.Verify(pin, row.PinHash))
+            {
+                connection.Execute(
+                    """
+                    UPDATE Accounts
+                    SET FailedPinAttempts = 0,
+                        LastFailedPinAt = NULL,
+                        LockedUntil = NULL
+                    WHERE AccountNumber = @AccountNumber
+                      AND (FailedPinAttempts <> 0 OR LockedUntil IS NOT NULL);
+                    """,
+                    new { AccountNumber = accountNumber },
+                    transaction);
+
+                transaction.Commit();
+                return PinAttemptOutcome.Verified;
+            }
+
+            RecordFailedPin(connection, transaction, accountNumber);
+
+            // Commit, not roll back: the failure count must be kept.
+            transaction.Commit();
+            return PinAttemptOutcome.WrongPin;
+        }
+        catch
+        {
+            transaction.Rollback();
+            throw;
+        }
+    }
+
+    public int GetLockSecondsRemaining(string accountNumber)
+    {
+        using var connection = _connectionFactory.CreateConnection();
+
+        return connection.QuerySingleOrDefault<int>(
+            """
+            SELECT CASE WHEN LockedUntil IS NOT NULL
+                             AND LockedUntil > UTC_TIMESTAMP()
+                        THEN TIMESTAMPDIFF(SECOND, UTC_TIMESTAMP(), LockedUntil)
+                        ELSE 0 END
+            FROM Accounts
+            WHERE AccountNumber = @AccountNumber;
+            """,
+            new { AccountNumber = accountNumber });
+    }
+
+    /// <summary>Counts a wrong PIN (restarting after 24 quiet hours) and locks on every 5th.</summary>
+    private static void RecordFailedPin(
+        MySqlConnection connection,
+        MySqlTransaction transaction,
+        string accountNumber)
+    {
+        // MySQL applies SET left to right, so the first line still sees the old LastFailedPinAt.
+        connection.Execute(
+            """
+            UPDATE Accounts
+            SET FailedPinAttempts =
+                    IF(LastFailedPinAt IS NULL
+                       OR LastFailedPinAt < UTC_TIMESTAMP() - INTERVAL @ResetHours HOUR,
+                       1,
+                       FailedPinAttempts + 1),
+                LastFailedPinAt = UTC_TIMESTAMP()
+            WHERE AccountNumber = @AccountNumber;
+            """,
+            new
+            {
+                AccountNumber = accountNumber,
+                ResetHours = PinLockoutPolicy.ResetAfterHours
+            },
+            transaction);
+
+        int attempts = connection.QuerySingle<int>(
+            """
+            SELECT FailedPinAttempts
+            FROM Accounts
+            WHERE AccountNumber = @AccountNumber;
+            """,
+            new { AccountNumber = accountNumber },
+            transaction);
+
+        int? lockSeconds = PinLockoutPolicy.LockSeconds(attempts);
+
+        if (lockSeconds is null)
+            return;
+
+        connection.Execute(
+            """
+            UPDATE Accounts
+            SET LockedUntil = DATE_ADD(UTC_TIMESTAMP(), INTERVAL @Seconds SECOND)
+            WHERE AccountNumber = @AccountNumber;
+            """,
+            new { AccountNumber = accountNumber, Seconds = lockSeconds.Value },
+            transaction);
+    }
     private static LockedAccountRow? LockAccount(
         MySqlConnection connection,
         MySqlTransaction transaction,
@@ -494,5 +625,10 @@ public sealed class AccountRepository : IAccountRepository
         public DateTime Date { get; set; }
         public string Description { get; set; } = "";
         public string? Reference { get; set; }
+    }
+    private sealed class PinStateRow
+    {
+        public string PinHash { get; set; } = "";
+        public long LockSecondsRemaining { get; set; }
     }
 }

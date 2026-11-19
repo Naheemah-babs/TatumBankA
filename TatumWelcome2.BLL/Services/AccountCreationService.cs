@@ -1,6 +1,4 @@
-﻿
-using System.Security.Cryptography;
-using System.Security.Principal;
+﻿using System.Security.Cryptography;
 using TatumWelcome2.BLL.DTOs;
 using TatumWelcome2.BLL.IServices;
 using TatumWelcome2.Domain.Interfaces;
@@ -10,8 +8,6 @@ namespace TatumWelcome2.BLL.Services;
 
 public class AccountCreationService : IAccountCreationService
 {
-    
-    private const decimal MinimumOpeningDeposit = 1000m;
     private const int MaxNumberAttempts = 10;
 
     private readonly IAccountRepository _repository;
@@ -30,29 +26,18 @@ public class AccountCreationService : IAccountCreationService
 
     public CreateAccountResultDto CreateAccount(CreateAccountRequestDto request)
     {
-        string name = request.Name ?? string.Empty;
-        string phone = request.Phone ?? string.Empty;
-        string pin = request.Pin ?? string.Empty;
-        string city = request.City ?? string.Empty;
-        decimal openingDeposit = request.OpeningDeposit;
+        // Every field is checked, and every problem is reported at once.
+        NewAccountValidation validation = NewAccountValidator.Validate(request);
 
-        if (string.IsNullOrWhiteSpace(name) ||
-            string.IsNullOrWhiteSpace(city) ||
-            string.IsNullOrWhiteSpace(phone) ||
-            string.IsNullOrWhiteSpace(pin) ||
-            phone.Length != 11 ||
-            !phone.All(char.IsDigit) ||
-            !phone.StartsWith('0') ||
-            pin.Length != 4 ||
-            !pin.All(char.IsDigit) ||
-            openingDeposit < MinimumOpeningDeposit ||
-            openingDeposit > AccountLimits.MaximumBalance)
+        if (!validation.IsValid)
         {
-            return new CreateAccountResultDto(CreateAccountStatus.InvalidDetails);
+            return new CreateAccountResultDto(
+                CreateAccountStatus.InvalidDetails,
+                Errors: validation.Errors);
         }
 
         // Hash once: PBKDF2 is deliberately slow.
-        string pinHash = _pinHasher.Hash(pin);
+        string pinHash = _pinHasher.Hash(request.Pin);
 
         for (int attempt = 0; attempt < MaxNumberAttempts; attempt++)
         {
@@ -65,11 +50,11 @@ public class AccountCreationService : IAccountCreationService
             NewAccount newAccount = new()
             {
                 AccountNumber = number,
-                Name = name.Trim(),
-                Phone = phone.Trim(),
-                Branch = city.Trim(),
+                Name = validation.Name,
+                Phone = validation.Phone,
+                Branch = validation.City,
                 PinHash = pinHash,
-                OpeningDeposit = openingDeposit,
+                OpeningDeposit = request.OpeningDeposit,
                 OpeningDepositReference =
                     _referenceGenerator.Generate(ReferencePrefixes.Deposit),
                 OpeningDepositDescription = TransactionDescriptions.OpeningDeposit
@@ -100,6 +85,4 @@ public class AccountCreationService : IAccountCreationService
 
         return new CreateAccountResultDto(CreateAccountStatus.NumberUnavailable);
     }
-
-
 }

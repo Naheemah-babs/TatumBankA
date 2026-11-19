@@ -6,9 +6,13 @@ public enum LoginOutcome
 {
     Success,
     MissingCredentials,
-    InvalidCredentials
+    InvalidCredentials,
+    AccountLocked
 }
 
 
-public sealed record LoginResult(LoginOutcome Outcome, Account? Account = null);
+public sealed record LoginResult(
+    LoginOutcome Outcome,
+    Account? Account = null,
+    int RetryAfterSeconds = 0);
 

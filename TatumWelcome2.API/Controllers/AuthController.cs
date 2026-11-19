@@ -25,6 +25,7 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("/accounts")]
+    [EnableRateLimiting("create-account")]
     [Tags("Customer Accounts")]
     public IActionResult CreateAccount(
         [FromBody] CreateAccountRequestDto request)
@@ -44,7 +45,7 @@ public class AuthController : ControllerBase
             request.Pin);
 
         if (result.Account is null)
-            return AuthResponses.LoginFailed(result.Outcome);
+            return AuthResponses.LoginFailed(result);
 
         AccessToken token = _tokenService.CreateToken(result.Account.AccountNumber);
 
