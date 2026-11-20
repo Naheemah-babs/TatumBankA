@@ -1,6 +1,6 @@
 ﻿
+using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Configuration;
-using MySqlConnector;
 
 namespace TatumWelcome2.Infrastructure.Database;
 
@@ -15,8 +15,8 @@ public class DbConnectionFactory : IDbConnectionFactory
                 "MySQL connection string is missing.");
     }
 
-    public MySqlConnection CreateConnection()
+    public SqlConnection CreateConnection()
     {
-        return new MySqlConnection(_connectionString);
+        return new SqlConnection(_connectionString);
     }
 }

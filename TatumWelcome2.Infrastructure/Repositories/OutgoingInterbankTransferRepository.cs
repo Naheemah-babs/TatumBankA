@@ -1,5 +1,5 @@
 ﻿using Dapper;
-using MySqlConnector;
+using Microsoft.Data.SqlClient;
 using TatumWelcome2.BLL.IServices;
 using TatumWelcome2.Domain.Interfaces;
 using TatumWelcome2.Domain.Models;
@@ -54,9 +54,8 @@ public sealed class OutgoingInterbankTransferRepository : IInterbankOutgoingTran
             SenderRow? sender = connection.QuerySingleOrDefault<SenderRow>(
                 """
                 SELECT PinHash, Balance, IsFrozen
-                FROM Accounts
-                WHERE AccountNumber = @SenderNumber
-                FOR UPDATE;
+                FROM Accounts WITH (UPDLOCK, ROWLOCK)
+                WHERE AccountNumber = @SenderNumber;
                 """,
                 new { SenderNumber = senderNumber },
                 transaction);
@@ -137,7 +136,7 @@ public sealed class OutgoingInterbankTransferRepository : IInterbankOutgoingTran
             transaction.Commit();
             return TransactionResult.Success;
         }
-        catch (MySqlException ex) when (MySqlErrors.IsUniqueViolation(ex))
+        catch (SqlException ex) when (SqlServerErrors.IsUniqueViolation(ex))
         {
             transaction.Rollback();
             return TransactionResult.DuplicateReference;
@@ -156,8 +155,9 @@ public sealed class OutgoingInterbankTransferRepository : IInterbankOutgoingTran
 
         using var connection = _factory.CreateConnection();
 
-        // CRC32 is computed by MySQL, so every instance agrees on
-        // ownership (string.GetHashCode differs per process).
+        // The hash is computed by SQL Server (CHECKSUM), so every instance
+        // agrees on ownership (string.GetHashCode differs per process).
+        // CAST to BIGINT before ABS avoids an overflow on the smallest INT.
         return connection.Query<InterbankOutgoingTransferRecord>(
             """
             SELECT Reference, SenderAccountNumber,
@@ -165,7 +165,7 @@ public sealed class OutgoingInterbankTransferRepository : IInterbankOutgoingTran
                    Amount, Status
             FROM OutgoingInterbankTransfers
             WHERE Status = 'Pending'
-              AND MOD(CRC32(Reference), @PartitionCount) = @PartitionIndex
+              AND ABS(CAST(CHECKSUM(Reference) AS BIGINT)) % @PartitionCount = @PartitionIndex
             ORDER BY CreatedAt;
             """,
             new
@@ -204,9 +204,8 @@ public sealed class OutgoingInterbankTransferRepository : IInterbankOutgoingTran
                     SELECT Reference, SenderAccountNumber,
                            RecipientAccountNumber, BankUrl,
                            Amount, Status
-                    FROM OutgoingInterbankTransfers
-                    WHERE Reference = @Reference
-                    FOR UPDATE;
+                    FROM OutgoingInterbankTransfers WITH (UPDLOCK, ROWLOCK)
+                    WHERE Reference = @Reference;
                     """,
                     new { Reference = reference },
                     transaction);
@@ -221,9 +220,8 @@ public sealed class OutgoingInterbankTransferRepository : IInterbankOutgoingTran
             decimal balance = connection.QuerySingle<decimal>(
                 """
                 SELECT Balance
-                FROM Accounts
-                WHERE AccountNumber = @AccountNumber
-                FOR UPDATE;
+                FROM Accounts WITH (UPDLOCK, ROWLOCK)
+                WHERE AccountNumber = @AccountNumber;
                 """,
                 new { AccountNumber = transfer.SenderAccountNumber },
                 transaction);
@@ -286,7 +284,7 @@ public sealed class OutgoingInterbankTransferRepository : IInterbankOutgoingTran
     }
 
     private static TransactionResult Abort(
-        MySqlTransaction transaction,
+        SqlTransaction transaction,
         TransactionResult result)
     {
         transaction.Rollback();

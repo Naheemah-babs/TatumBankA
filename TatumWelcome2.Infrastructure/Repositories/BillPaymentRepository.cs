@@ -1,5 +1,5 @@
 ﻿using Dapper;
-using MySqlConnector;
+using Microsoft.Data.SqlClient;
 using TatumWelcome2.BLL.DTOs;
 using TatumWelcome2.BLL.IServices;
 using TatumWelcome2.Domain.Interfaces;
@@ -10,15 +10,17 @@ namespace TatumWelcome2.Infrastructure.Repositories;
 
 public sealed class BillPaymentRepository : IBillPaymentRepository
 {
+    // Relies on the Reference key being created with IGNORE_DUP_KEY = ON:
+    // a duplicate reference inserts nothing and returns 0 rows.
     private const string ReserveReferenceSql = """
-        INSERT IGNORE INTO BillPayments
+        INSERT INTO BillPayments
             (Reference, BankId, AccountNumber,
              PaymentType, Network, PhoneNumber,
              Amount, DataPlanName, Success, Message)
         VALUES
             (@Reference, @BankId, @AccountNumber,
              @PaymentType, @Network, @PhoneNumber,
-             @Amount, @DataPlanName, FALSE, 'Processing');
+             @Amount, @DataPlanName, 0, 'Processing');
         """;
 
     private const string SelectPaymentSql = """
@@ -124,15 +126,14 @@ public sealed class BillPaymentRepository : IBillPaymentRepository
         try
         {
             CustomerAccountRow? account =
-                connection.QuerySingleOrDefault<CustomerAccountRow>(
-                    """
-                    SELECT PinHash, Balance, IsFrozen
-                    FROM Accounts
-                    WHERE AccountNumber = @AccountNumber
-                    FOR UPDATE;
-                    """,
-                    new { request.AccountNumber },
-                    transaction);
+    connection.QuerySingleOrDefault<CustomerAccountRow>(
+        """
+        SELECT PinHash, Balance, IsFrozen
+        FROM Accounts WITH (UPDLOCK, ROWLOCK)
+        WHERE AccountNumber = @AccountNumber;
+        """,
+        new { request.AccountNumber },
+        transaction);
 
             if (account == null)
                 return Reject(transaction, TransactionResult.AccountNotFound);
@@ -207,8 +208,8 @@ public sealed class BillPaymentRepository : IBillPaymentRepository
     }
 
     private static BillPaymentRecord? FindPayment(
-        MySqlConnection connection,
-        MySqlTransaction transaction,
+        SqlConnection connection,
+        SqlTransaction transaction,
         string reference)
     {
         return connection.QuerySingleOrDefault<BillPaymentRecord>(
@@ -218,8 +219,8 @@ public sealed class BillPaymentRepository : IBillPaymentRepository
     }
 
     private static void RecordOutcome(
-        MySqlConnection connection,
-        MySqlTransaction transaction,
+        SqlConnection connection,
+        SqlTransaction transaction,
         string reference,
         BillProviderDecision decision)
     {
@@ -235,7 +236,7 @@ public sealed class BillPaymentRepository : IBillPaymentRepository
     }
 
     private static CustomerPurchaseWrite Reject(
-        MySqlTransaction transaction,
+        SqlTransaction transaction,
         TransactionResult reason)
     {
         transaction.Rollback();

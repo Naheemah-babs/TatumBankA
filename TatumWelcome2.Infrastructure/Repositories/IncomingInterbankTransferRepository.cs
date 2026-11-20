@@ -33,15 +33,16 @@ public sealed class IncomingInterbankTransferRepository : IIncomingInterbankTran
         try
         {
             // Reserve the reference (0 rows when it already exists).
+            // Relies on the Reference key being created with IGNORE_DUP_KEY = ON.
             int inserted = connection.Execute(
                 """
-                INSERT IGNORE INTO IncomingInterbankTransfers
-                    (Reference, SenderAccountNumber,
-                     RecipientAccountNumber, Amount, Status)
-                VALUES
-                    (@Reference, @SenderAccountNumber,
-                     @RecipientAccountNumber, @Amount, 'Processing');
-                """,
+    INSERT INTO IncomingInterbankTransfers
+        (Reference, SenderAccountNumber,
+         RecipientAccountNumber, Amount, Status)
+    VALUES
+        (@Reference, @SenderAccountNumber,
+         @RecipientAccountNumber, @Amount, 'Processing');
+    """,
                 request,
                 transaction);
 
@@ -61,14 +62,13 @@ public sealed class IncomingInterbankTransferRepository : IIncomingInterbankTran
             }
 
             RecipientRow? recipient = connection.QuerySingleOrDefault<RecipientRow>(
-                """
-                SELECT Balance
-                FROM Accounts
-                WHERE AccountNumber = @RecipientAccountNumber
-                FOR UPDATE;
-                """,
-                new { request.RecipientAccountNumber },
-                transaction);
+     """
+    SELECT Balance
+    FROM Accounts WITH (UPDLOCK, ROWLOCK)
+    WHERE AccountNumber = @RecipientAccountNumber;
+    """,
+     new { request.RecipientAccountNumber },
+     transaction);
 
             if (recipient == null ||
                 recipient.Balance > AccountLimits.MaximumBalance - request.Amount)
