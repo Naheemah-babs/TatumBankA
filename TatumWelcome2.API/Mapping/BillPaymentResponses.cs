@@ -36,6 +36,22 @@ namespace TatumWelcome2.API.Mapping
                 BillPurchaseOutcome.ReferenceConflict =>
                     new ConflictObjectResult(body),
 
+                // Same message and status as a locked login, withdraw or transfer.
+                BillPurchaseOutcome.AccountLocked =>
+                    new ObjectResult(ApiResponse.Message(
+                        AuthResponses.LockedMessage(result.RetryAfterSeconds ?? 0)))
+                    {
+                        StatusCode = StatusCodes.Status429TooManyRequests
+                    },
+
+                // The repository's own PIN re-check found a lock (rare race).
+                BillPurchaseOutcome.Rejected
+                    when result.FailureReason == TransactionResult.AccountLocked =>
+                    new ObjectResult(body)
+                    {
+                        StatusCode = StatusCodes.Status429TooManyRequests
+                    },
+
                 BillPurchaseOutcome.Rejected
                     when result.FailureReason == TransactionResult.AccountNotFound =>
                     new NotFoundObjectResult(body),

@@ -24,4 +24,5 @@ public enum TransactionResult
     RecipientRequired,
     AmountNotWholeNumber,
     AmountOutOfRange,
+    AccountLocked,
 }

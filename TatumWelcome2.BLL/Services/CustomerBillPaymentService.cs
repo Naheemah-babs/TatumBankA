@@ -1,5 +1,6 @@
 ﻿using TatumWelcome2.BLL.DTOs;
 using TatumWelcome2.BLL.IServices;
+using TatumWelcome2.Domain.Helper;
 using TatumWelcome2.Domain.Interfaces;
 using TatumWelcome2.Domain.Models;
 
@@ -12,13 +13,16 @@ public sealed class CustomerBillPaymentService : ICustomerBillPaymentService
 
     private readonly IBillPaymentRepository _repository;
     private readonly IBillPaymentProvider _provider;
+    private readonly IAccountRepository _accounts;
 
     public CustomerBillPaymentService(
         IBillPaymentRepository repository,
-        IBillPaymentProvider provider)
+        IBillPaymentProvider provider,
+        IAccountRepository accounts)
     {
         _repository = repository;
         _provider = provider;
+        _accounts = accounts;
     }
 
     public BillPurchaseResult BuyAirtime(
@@ -43,7 +47,7 @@ public sealed class CustomerBillPaymentService : ICustomerBillPaymentService
             BankId = OwnBankId,
             AccountNumber = accountNumber,
             PaymentType = BillPaymentTypes.Airtime,
-            Network = request.Network,
+            Network = NetworkHelper.Normalize(request.Network),
             PhoneNumber = phone,
             Amount = request.Amount
         };
@@ -52,7 +56,7 @@ public sealed class CustomerBillPaymentService : ICustomerBillPaymentService
             bill,
             request.Pin,
             TransactionType.AirtimePurchase,
-            TransactionDescriptions.Airtime(request.Network, phone, reference));
+            TransactionDescriptions.Airtime(bill.Network, phone, reference));
     }
 
     public BillPurchaseResult BuyData(
@@ -85,7 +89,7 @@ public sealed class CustomerBillPaymentService : ICustomerBillPaymentService
             BankId = OwnBankId,
             AccountNumber = accountNumber,
             PaymentType = BillPaymentTypes.Data,
-            Network = request.Network,
+            Network = NetworkHelper.Normalize(request.Network),
             PhoneNumber = phone,
             Amount = plan.Price,
             DataPlanName = plan.Name
@@ -95,7 +99,7 @@ public sealed class CustomerBillPaymentService : ICustomerBillPaymentService
             bill,
             request.Pin,
             TransactionType.DataPurchase,
-            TransactionDescriptions.Data(request.Network, plan.Name, phone, reference));
+            TransactionDescriptions.Data(bill.Network, plan.Name, phone, reference));
     }
 
     private BillPurchaseResult Purchase(
@@ -109,8 +113,33 @@ public sealed class CustomerBillPaymentService : ICustomerBillPaymentService
         if (error != null)
             return Invalid(bill.Reference, error, bill.Amount);
 
+        // Input mistakes are reported first, so they never count as wrong PINs.
+        PinAttemptOutcome pinAttempt =
+            _accounts.VerifyPinWithLockout(bill.AccountNumber, pin);
+
+        if (pinAttempt == PinAttemptOutcome.Locked)
+        {
+            int seconds = _accounts.GetLockSecondsRemaining(bill.AccountNumber);
+
+            return new BillPurchaseResult(
+                BillPurchaseOutcome.AccountLocked,
+                bill.Reference,
+                $"Too many requests. Please try again in {seconds} seconds.",
+                bill.Amount,
+                TransactionResult.AccountLocked,
+                RetryAfterSeconds: seconds);
+        }
+
+        if (pinAttempt == PinAttemptOutcome.WrongPin)
+            return Rejected(bill, TransactionResult.InvalidPin);
+
+        if (pinAttempt == PinAttemptOutcome.AccountNotFound)
+            return Rejected(bill, TransactionResult.AccountNotFound);
+
+        // Only a verified PIN reaches the provider.
         BillProviderDecision decision = _provider.Authorize(bill);
 
+        // The repository checks the PIN again against the locked row.
         CustomerPurchaseWrite write = _repository.PurchaseForCustomer(
             bill,
             pin,
@@ -144,6 +173,7 @@ public sealed class CustomerBillPaymentService : ICustomerBillPaymentService
         {
             TransactionResult.AccountNotFound => "Account not found.",
             TransactionResult.InvalidPin => "Incorrect PIN.",
+            TransactionResult.AccountLocked => "Account is temporarily locked. Please try again later.",
             TransactionResult.AccountFrozen => "Account is frozen.",
             TransactionResult.InsufficientFunds => "Insufficient funds.",
             _ => "Purchase failed."

@@ -2,6 +2,7 @@
 using Microsoft.Data.SqlClient;
 using TatumWelcome2.BLL.IServices;
 using TatumWelcome2.BLL.Services;
+using TatumWelcome2.Domain;
 using TatumWelcome2.Domain.Interfaces;
 using TatumWelcome2.Domain.Models;
 using TatumWelcome2.Infrastructure.Database;
@@ -134,7 +135,7 @@ public sealed class AccountRepository : IAccountRepository
                 account.AccountNumber,
                 TransactionType.Deposit,
                 account.OpeningDeposit,
-                DateTime.Now,
+                LocalClock.Now,
                 account.OpeningDepositDescription,
                 account.OpeningDepositReference);
 
@@ -196,7 +197,7 @@ public sealed class AccountRepository : IAccountRepository
                 accountNumber,
                 TransactionType.Deposit,
                 amount,
-                DateTime.Now,
+                LocalClock.Now,
                 description,
                 reference);
 
@@ -249,7 +250,7 @@ public sealed class AccountRepository : IAccountRepository
                 accountNumber,
                 TransactionType.Withdrawal,
                 amount,
-                DateTime.Now,
+                LocalClock.Now,
                 description,
                 reference);
 
@@ -317,7 +318,7 @@ public sealed class AccountRepository : IAccountRepository
                 new { AccountNumber = recipientNumber, Amount = amount },
                 transaction);
 
-            DateTime date = DateTime.Now;
+            DateTime date = LocalClock.Now;
 
             // Names come from the locked rows, so the wording is applied here.
             InsertTransaction(

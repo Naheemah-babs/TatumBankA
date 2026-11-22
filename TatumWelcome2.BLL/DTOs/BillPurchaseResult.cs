@@ -23,7 +23,10 @@ namespace TatumWelcome2.BLL.DTOs
         /// <summary>Reference already used for a different purchase.</summary>
         ReferenceConflict,
 
-        InvalidRequest
+        InvalidRequest,
+
+        /// <summary>Wrong-PIN lockout is active; see <see cref="BillPurchaseResult.RetryAfterSeconds"/>.</summary>
+        AccountLocked,
     }
     
     /// <param name="Replayed">
@@ -37,5 +40,6 @@ namespace TatumWelcome2.BLL.DTOs
         string Message,
         decimal Amount,
         TransactionResult? FailureReason = null,
-        bool Replayed = false);
+        bool Replayed = false,
+        int? RetryAfterSeconds = null);
 }

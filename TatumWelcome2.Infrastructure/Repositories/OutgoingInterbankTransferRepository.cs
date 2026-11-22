@@ -1,6 +1,7 @@
 ﻿using Dapper;
 using Microsoft.Data.SqlClient;
 using TatumWelcome2.BLL.IServices;
+using TatumWelcome2.Domain;
 using TatumWelcome2.Domain.Interfaces;
 using TatumWelcome2.Domain.Models;
 using TatumWelcome2.Infrastructure.Database;
@@ -106,7 +107,7 @@ public sealed class OutgoingInterbankTransferRepository : IInterbankOutgoingTran
                 {
                     SenderNumber = senderNumber,
                     Amount = amount,
-                    Date = DateTime.UtcNow,
+                    Date = LocalClock.Now,
                     Description = description,
                     Reference = reference
                 },
@@ -258,7 +259,7 @@ public sealed class OutgoingInterbankTransferRepository : IInterbankOutgoingTran
                 {
                     AccountNumber = transfer.SenderAccountNumber,
                     transfer.Amount,
-                    Date = DateTime.UtcNow,
+                    Date = LocalClock.Now,
                     Description = description,
                     Reference = reference
                 },

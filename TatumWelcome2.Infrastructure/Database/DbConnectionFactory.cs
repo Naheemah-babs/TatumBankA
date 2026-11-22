@@ -12,7 +12,7 @@ public class DbConnectionFactory : IDbConnectionFactory
     {
         _connectionString = configuration.GetConnectionString("DefaultConnection")
             ?? throw new InvalidOperationException(
-                "MySQL connection string is missing.");
+                "Connection string 'DefaultConnection' is missing.");
     }
 
     public SqlConnection CreateConnection()

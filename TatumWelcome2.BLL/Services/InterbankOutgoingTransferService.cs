@@ -12,6 +12,7 @@ namespace TatumWelcome2.BLL.Services;
 
 public sealed class InterbankOutgoingTransferService : IInterbankOutgoingTransferService
 {
+    private readonly IAccountRepository _accounts;
     private readonly IBankApiClient _bankApiClient;
     private readonly IInterbankOutgoingTransferRepository _repository;
     private readonly ILogger<InterbankOutgoingTransferService> _logger;
@@ -20,11 +21,13 @@ public sealed class InterbankOutgoingTransferService : IInterbankOutgoingTransfe
     public InterbankOutgoingTransferService(
         IBankApiClient bankApiClient,
         IInterbankOutgoingTransferRepository repository,
+        IAccountRepository accounts,
         ILogger<InterbankOutgoingTransferService> logger,
         IOptions<InterBankOptions> interbankOptions)
     {
         _bankApiClient = bankApiClient;
         _repository = repository;
+        _accounts = accounts;
         _logger = logger;
         _interbankOptions = interbankOptions.Value;
     }
@@ -138,6 +141,36 @@ public sealed class InterbankOutgoingTransferService : IInterbankOutgoingTransfe
                 InterbankSendOutcome.Pending,
                 reference,
                 $"Transfer pending confirmation. Reference: {reference}. No additional debit made.");
+        }
+        PinAttemptOutcome pinAttempt = _accounts.VerifyPinWithLockout(senderNumber, pin);
+
+        if (pinAttempt == PinAttemptOutcome.Locked)
+        {
+            int seconds = _accounts.GetLockSecondsRemaining(senderNumber);
+
+            return new InterbankSendResult(
+                InterbankSendOutcome.AccountLocked,
+                reference,
+                $"Too many requests. Please try again in {seconds} seconds.",
+                RetryAfterSeconds: seconds);
+        }
+
+        if (pinAttempt == PinAttemptOutcome.WrongPin)
+        {
+            return new InterbankSendResult(
+                InterbankSendOutcome.Failed,
+                reference,
+                $"Transfer failed: {TransactionResult.InvalidPin}",
+                TransactionResult.InvalidPin);
+        }
+
+        if (pinAttempt == PinAttemptOutcome.AccountNotFound)
+        {
+            return new InterbankSendResult(
+                InterbankSendOutcome.Failed,
+                reference,
+                $"Transfer failed: {TransactionResult.AccountNotFound}",
+                TransactionResult.AccountNotFound);
         }
 
         var request = new InterbankTransferRequestDto

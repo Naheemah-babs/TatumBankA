@@ -1,5 +1,6 @@
 ﻿using TatumWelcome2.BLL.DTOs;
 using TatumWelcome2.BLL.IServices;
+using TatumWelcome2.Domain.Helper;
 using TatumWelcome2.Domain.Interfaces;
 using TatumWelcome2.Domain.Models;
 
@@ -41,6 +42,9 @@ public sealed class BillPaymentService : IBillPaymentService
                 Message = "Payment request is required."
             };
         }
+
+        // "mtn" -> "MTN", so validation, storage and replay checks all agree.
+        request.Network = NetworkHelper.Normalize(request.Network);
 
         string? error = BillPaymentValidator.Validate(request);
 

@@ -21,13 +21,11 @@ namespace TatumWelcome2.API.Mapping
                     }),
 
                 TransactionResult.InvalidAmount =>
-    ApiResponse.BadRequest("Invalid amount."),
-                TransactionResult.AmountNotWholeNumber =>
-    ApiResponse.BadRequest("Amount must be a whole number, with no decimal places."),
+                    ApiResponse.BadRequest("Invalid amount."),
 
-                TransactionResult.AmountOutOfRange =>
-                    ApiResponse.BadRequest(
-                        $"Amount must be more than 500 and not more than {AccountLimits.MaximumBalance:N0}."),
+                TransactionResult.AmountNotWholeNumber => NotWholeNumber(),
+
+                TransactionResult.AmountOutOfRange => OutOfRange(),
 
                 TransactionResult.AccountNotFound =>
                     ApiResponse.NotFound("Account not found."),
@@ -44,7 +42,8 @@ namespace TatumWelcome2.API.Mapping
 
         public static IActionResult Withdraw(
             TransactionResult result,
-            decimal amount) =>
+            decimal amount,
+            int lockSeconds = 0) =>
             result switch
             {
                 TransactionResult.Success =>
@@ -60,6 +59,8 @@ namespace TatumWelcome2.API.Mapping
                 TransactionResult.InvalidPin =>
                     ApiResponse.BadRequest("Incorrect PIN."),
 
+                TransactionResult.AccountLocked => Locked(lockSeconds),
+
                 TransactionResult.AccountFrozen =>
                     ApiResponse.BadRequest("Account is frozen."),
 
@@ -68,6 +69,10 @@ namespace TatumWelcome2.API.Mapping
 
                 TransactionResult.InvalidAmount =>
                     ApiResponse.BadRequest("Withdrawal amount must be greater than zero."),
+
+                TransactionResult.AmountNotWholeNumber => NotWholeNumber(),
+
+                TransactionResult.AmountOutOfRange => OutOfRange(),
 
                 TransactionResult.AccountNotFound =>
                     ApiResponse.NotFound("Account not found."),
@@ -78,7 +83,8 @@ namespace TatumWelcome2.API.Mapping
         public static IActionResult Transfer(
             TransactionResult result,
             string recipientAccountNumber,
-            decimal amount) =>
+            decimal amount,
+            int lockSeconds = 0) =>
             result switch
             {
                 TransactionResult.Success =>
@@ -101,6 +107,8 @@ namespace TatumWelcome2.API.Mapping
                 TransactionResult.InvalidPin =>
                     ApiResponse.BadRequest("Incorrect PIN."),
 
+                TransactionResult.AccountLocked => Locked(lockSeconds),
+
                 TransactionResult.AccountFrozen =>
                     ApiResponse.BadRequest("Account is frozen."),
 
@@ -109,6 +117,10 @@ namespace TatumWelcome2.API.Mapping
 
                 TransactionResult.InvalidAmount =>
                     ApiResponse.BadRequest("Transfer amount must be greater than zero."),
+
+                TransactionResult.AmountNotWholeNumber => NotWholeNumber(),
+
+                TransactionResult.AmountOutOfRange => OutOfRange(),
 
                 TransactionResult.InvalidRecipient =>
                     ApiResponse.BadRequest("Recipient account not found."),
@@ -121,6 +133,21 @@ namespace TatumWelcome2.API.Mapping
                         "Transfer failed. Recipient account balance limit would be exceeded."),
 
                 _ => ApiResponse.BadRequest("Transfer failed.")
+            };
+
+        // Shared by deposit, withdraw and transfer, so the wording is identical.
+        private static IActionResult NotWholeNumber() =>
+            ApiResponse.BadRequest("Amount must be a whole number, with no decimal places.");
+
+        private static IActionResult OutOfRange() =>
+            ApiResponse.BadRequest(
+                $"Amount must be at least 500 and not more than {AccountLimits.MaximumBalance:N0}.");
+
+        // Same message and status as a locked login.
+        private static IActionResult Locked(int seconds) =>
+            new ObjectResult(ApiResponse.Message(AuthResponses.LockedMessage(seconds)))
+            {
+                StatusCode = StatusCodes.Status429TooManyRequests
             };
     }
 }

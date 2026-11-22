@@ -4,6 +4,7 @@ using Microsoft.OpenApi;
 using System.Security.Claims;
 using System.Text;
 using System.Threading.RateLimiting;
+using TatumWelcome2.API.Mapping;
 using TatumWelcome2.API.Security;
 using TatumWelcome2.BLL;
 using TatumWelcome2.BLL.IServices;
@@ -16,7 +17,41 @@ var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.UseUrls("https://localhost:5000");
 
 // Register controller-based Web API services.
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .ConfigureApiBehaviorOptions(options =>
+    {
+        // Replaces the default technical 400 (which exposes JSON paths and byte
+        // positions) when the body cannot be read, e.g. an amount of 00 or "abc".
+        options.InvalidModelStateResponseFactory = context =>
+        {
+            // JSON problems are keyed "$.fieldName"; a missing body is keyed "request".
+            string[] fields = context.ModelState
+                .Where(entry => entry.Value?.Errors.Count > 0 &&
+                                entry.Key.StartsWith("$."))
+                .Select(entry => entry.Key[2..].Split('.', '[')[0])
+                .Distinct()
+                .ToArray();
+
+            if (fields.Length == 0)
+            {
+                return ApiResponse.BadRequest(
+                    "The request is missing or not valid. Please check it and try again.");
+            }
+
+            bool numeric = fields.Any(field =>
+                field.Equals("amount", StringComparison.OrdinalIgnoreCase) ||
+                field.Equals("openingDeposit", StringComparison.OrdinalIgnoreCase));
+
+            string message = $"Invalid value for '{string.Join("', '", fields)}'.";
+
+            if (numeric)
+            {
+                message += " Amounts must be plain numbers with no quotes or leading zeros, for example 1000.";
+            }
+
+            return ApiResponse.BadRequest(message);
+        };
+    });
 
 // Read JWT settings from User Secrets.
 string jwtKey = builder.Configuration["Jwt:Key"]
@@ -69,6 +104,25 @@ builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode =
         StatusCodes.Status429TooManyRequests;
+
+    // Without this, a rate-limited request gets an empty 429 body.
+    options.OnRejected = async (context, cancellationToken) =>
+    {
+        context.HttpContext.Response.StatusCode =
+            StatusCodes.Status429TooManyRequests;
+
+        int seconds = 60;
+
+        if (context.Lease.TryGetMetadata(MetadataName.RetryAfter, out TimeSpan retryAfter))
+        {
+            seconds = Math.Max(1, (int)Math.Ceiling(retryAfter.TotalSeconds));
+            context.HttpContext.Response.Headers.RetryAfter = seconds.ToString();
+        }
+
+        await context.HttpContext.Response.WriteAsJsonAsync(
+            new { message = $"Too many requests. Please try again in {seconds} seconds." },
+            cancellationToken);
+    };
 
     // Limit login attempts per IP address.
     options.AddPolicy("login", context =>
@@ -166,7 +220,7 @@ builder.Services.AddSwaggerGen(options =>
         });
 });
 
-// Repositories, MySQL connection factory and bank-to-bank HTTP client.
+// Repositories, SQL Server connection factory and bank-to-bank HTTP client.
 builder.Services.AddTatumInfrastructure();
 
 // Business services (scoped) and stateless helpers.

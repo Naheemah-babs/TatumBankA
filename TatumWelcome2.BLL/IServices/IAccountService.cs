@@ -15,6 +15,9 @@ public interface IAccountService
     /// <summary>Newest first. Null when the account is not found.</summary>
     TransactionHistoryResponseDto? GetTransactionHistory(string accountNumber);
 
+    /// <summary>Seconds left on a PIN lockout, 0 when the account is not locked.</summary>
+    int GetPinLockSecondsRemaining(string accountNumber);
+
     TransactionResult Deposit(string accountNumber, decimal amount);
 
     TransactionResult Withdraw(string accountNumber, decimal amount, string pin);

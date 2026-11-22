@@ -119,6 +119,23 @@ public sealed class AccountService : IAccountService
         };
     }
 
+    public int GetPinLockSecondsRemaining(string accountNumber) =>
+        _repository.GetLockSecondsRemaining(accountNumber);
+
+    /// <summary>
+    /// Checks the PIN through the same lockout counter the login uses:
+    /// wrong PINs are counted, and every 5th one locks the account.
+    /// Returns null when the PIN is correct and the account is not locked.
+    /// </summary>
+    private TransactionResult? CheckPinWithLockout(string accountNumber, string pin) =>
+        _repository.VerifyPinWithLockout(accountNumber, pin) switch
+        {
+            PinAttemptOutcome.Verified => null,
+            PinAttemptOutcome.Locked => TransactionResult.AccountLocked,
+            PinAttemptOutcome.WrongPin => TransactionResult.InvalidPin,
+            _ => TransactionResult.AccountNotFound
+        };
+
     public TransactionResult Deposit(string accountNumber, decimal amount)
     {
         if (CheckAmount(amount) is { } amountError)
@@ -142,7 +159,11 @@ public sealed class AccountService : IAccountService
         if (CheckAmount(amount) is { } amountError)
             return amountError;
 
-        // The PIN is verified against the locked row inside the repository.
+        // Amount mistakes are reported first, so they never count as wrong PINs.
+        if (CheckPinWithLockout(accountNumber, pin) is { } pinError)
+            return pinError;
+
+        // The repository checks the PIN again against the locked row.
         return _repository.Withdraw(
             accountNumber,
             amount,
@@ -171,6 +192,9 @@ public sealed class AccountService : IAccountService
 
         if (CheckAmount(amount) is { } amountError)
             return amountError;
+
+        if (CheckPinWithLockout(senderNumber, pin) is { } pinError)
+            return pinError;
 
         return _repository.Transfer(
             senderNumber,

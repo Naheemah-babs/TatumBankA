@@ -52,7 +52,10 @@ public class TransactionsController : ControllerBase
             request.Amount,
             request.Pin);
 
-        return TransactionResponses.Withdraw(result, request.Amount);
+        return TransactionResponses.Withdraw(
+            result,
+            request.Amount,
+            LockSeconds(accountNumber, result));
     }
 
     [HttpPost("transfers")]
@@ -74,6 +77,12 @@ public class TransactionsController : ControllerBase
         return TransactionResponses.Transfer(
             result,
             request.RecipientAccountNumber,
-            request.Amount);
+            request.Amount,
+            LockSeconds(senderNumber, result));
     }
+
+    private int LockSeconds(string accountNumber, TransactionResult result) =>
+        result == TransactionResult.AccountLocked
+            ? _accountService.GetPinLockSecondsRemaining(accountNumber)
+            : 0;
 }

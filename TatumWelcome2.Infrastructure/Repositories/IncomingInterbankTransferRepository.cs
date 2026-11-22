@@ -1,4 +1,5 @@
 ﻿using Dapper;
+using TatumWelcome2.Domain;
 using TatumWelcome2.Domain.Interfaces;
 using TatumWelcome2.Domain.Models;
 using TatumWelcome2.Infrastructure.Database;
@@ -110,7 +111,7 @@ public sealed class IncomingInterbankTransferRepository : IIncomingInterbankTran
                 {
                     request.RecipientAccountNumber,
                     request.Amount,
-                    Date = DateTime.UtcNow,
+                    Date = LocalClock.Now,
                     Description = description,
                     request.Reference
                 },

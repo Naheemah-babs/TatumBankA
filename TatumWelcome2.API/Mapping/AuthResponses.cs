@@ -58,7 +58,7 @@ namespace TatumWelcome2.API.Mapping
         _ => ApiResponse.Unauthorized("Incorrect account number or PIN.")
     };
 
-        private static string LockedMessage(int seconds)
+        internal static string LockedMessage(int seconds)
         {
             int minutes = Math.Max(1, (int)Math.Ceiling(seconds / 60.0));
 

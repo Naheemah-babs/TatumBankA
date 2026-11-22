@@ -29,6 +29,9 @@ namespace TatumWelcome2.API.Mapping
                 InterbankSendOutcome.DuplicateReference =>
                     new ConflictObjectResult(body),
 
+                InterbankSendOutcome.AccountLocked =>
+    new ObjectResult(body) { StatusCode = StatusCodes.Status429TooManyRequests },
+
                 InterbankSendOutcome.Failed
                     when result.FailureReason == TransactionResult.AccountNotFound =>
                     new NotFoundObjectResult(body),

@@ -13,7 +13,7 @@ namespace TatumWelcome2.Infrastructure
     public static class InfrastructureServiceCollectionExtensions
     {
         /// <summary>
-        /// Registers MySQL repositories and the bank-to-bank HTTP client.
+        /// Registers SQL Server repositories and the bank-to-bank HTTP client.
         /// Requires ConnectionStrings:DefaultConnection and Interbank:ApiKey.
         /// </summary>
         public static IServiceCollection AddTatumInfrastructure(
