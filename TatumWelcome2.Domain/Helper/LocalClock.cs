@@ -11,7 +11,7 @@ public static class LocalClock
 {
     private static readonly TimeZoneInfo Zone = ResolveZone();
 
-    /// <summary>Lagos wall-clock time (Kind = Unspecified, as stored in datetime2).</summary>
+    /// <summary>Local wall-clock time (Kind = Unspecified, as stored in datetime2).</summary>
     public static DateTime Now =>
         TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, Zone);
 
