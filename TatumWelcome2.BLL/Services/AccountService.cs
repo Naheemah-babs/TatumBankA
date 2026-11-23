@@ -208,23 +208,7 @@ public sealed class AccountService : IAccountService
     /// Returns why the amount is rejected, or null when it is acceptable.
     /// The whole-number check runs first so 0.01 gets the "whole number" message.
     /// </summary>
-    private static TransactionResult? CheckAmount(decimal amount)
-    {
-        if (!IsWholeNumber(amount))
-            return TransactionResult.AmountNotWholeNumber;
-
-        if (!IsWithinRange(amount))
-            return TransactionResult.AmountOutOfRange;
-
-        return null;
-    }
-
-    /// <summary>True when the amount has no decimal part (500 and 500.00 pass, 500.50 fails).</summary>
-    private static bool IsWholeNumber(decimal amount) =>
-        decimal.Truncate(amount) == amount;
-
-    /// <summary>At least the minimum and within the balance cap.</summary>
-    private static bool IsWithinRange(decimal amount) =>
-        amount >= 500 &&
-        amount <= AccountLimits.MaximumBalance;
+    /// <summary>Returns why the amount is rejected, or null when it is acceptable.</summary>
+    private static TransactionResult? CheckAmount(decimal amount) =>
+        AccountLimits.CheckAmount(amount);
 }

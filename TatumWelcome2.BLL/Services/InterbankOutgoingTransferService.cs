@@ -33,8 +33,8 @@ public sealed class InterbankOutgoingTransferService : IInterbankOutgoingTransfe
     }
 
     public Task<InterbankSendResult> SendTransferAsync(
-        string senderNumber,
-        SendInterbankTransferRequestDto request)
+    string senderNumber,
+    SendInterbankTransferRequestDto request)
     {
         string reference = request.Reference?.Trim() ?? string.Empty;
 
@@ -47,8 +47,30 @@ public sealed class InterbankOutgoingTransferService : IInterbankOutgoingTransfe
         if (string.IsNullOrWhiteSpace(request.RecipientAccountNumber))
             return Task.FromResult(InvalidRequest(reference, "Recipient account number is required."));
 
-        if (request.Amount <= 0)
-            return Task.FromResult(InvalidRequest(reference, "Amount must be greater than zero."));
+        // Trim once so "123 " is validated, stored and compared as "123".
+        string recipient = request.RecipientAccountNumber.Trim();
+
+        if (recipient.Length != AccountLimits.MaximumAccountNumberLength)
+        {
+            return Task.FromResult(InvalidRequest(
+                reference,
+                $"Recipient account number must be exactly {AccountLimits.MaximumAccountNumberLength} characters."));
+        }
+        if (!recipient.All(char.IsAsciiDigit))
+            return Task.FromResult(InvalidRequest(reference, "Recipient account number must contain digits only."));
+
+        // Same amount rules as an intrabank transfer: whole number, at least 500.
+        if (AccountLimits.CheckAmount(request.Amount) is { } amountError)
+        {
+            string message = amountError == TransactionResult.AmountNotWholeNumber
+                ? AccountLimits.NotWholeNumberMessage
+                : AccountLimits.OutOfRangeMessage;
+
+            return Task.FromResult(InvalidRequest(reference, message));
+        }
+
+        // 1000.00 passes the check above; store and send it as 1000.
+        decimal amount = decimal.Truncate(request.Amount);
 
         if (string.IsNullOrWhiteSpace(_interbankOptions.Url))
         {
@@ -59,8 +81,8 @@ public sealed class InterbankOutgoingTransferService : IInterbankOutgoingTransfe
         return SendTransferAsync(
             senderNumber,
             _interbankOptions.Url,
-            request.RecipientAccountNumber,
-            request.Amount,
+            recipient,
+            amount,
             request.Pin,
             reference);
     }

@@ -98,8 +98,6 @@ public sealed class InterbankTransferService : IInterbankTransferService
                request.SenderAccountNumber.Length <= 10 &&
                !string.IsNullOrWhiteSpace(request.RecipientAccountNumber) &&
                request.RecipientAccountNumber.Length <= 10 &&
-               request.Amount > 0 &&
-               request.Amount <= AccountLimits.MaximumBalance &&
-               decimal.Round(request.Amount, 2) == request.Amount;
+               AccountLimits.CheckAmount(request.Amount) is null;
     }
 }
